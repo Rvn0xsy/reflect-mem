@@ -2,15 +2,21 @@
 name = "reflect-mem"
 version = "0.1.0"
 edition = "2024"
+default-run = "reflect-mem"
 
 [dependencies]
+anyhow = "1.0.104"
 # arrow must match the version lancedb 0.37.1 links against (58.4.0), or the
 # RecordBatch / Array types we hand to lancedb won't unify with its own.
 arrow-array = "=58.4.0"
 arrow-schema = "=58.4.0"
+clap = { version = "4.6.7", features = ["derive"] }
 futures = "0.3.34"
 # Pinned to 0.37.1: 0.38.0 and 0.39.0 have an unconditional `pub mod job`
 # that references the `remote`-gated `Error::Http` variant, so they fail to
 # compile with default (no-remote) features. 0.37.1 is the newest that builds.
 lancedb = "=0.37.1"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["rt-multi-thread"] }

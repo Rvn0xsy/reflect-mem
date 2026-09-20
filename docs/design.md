@@ -319,6 +319,14 @@ dataset_id: Option<String>,
 
 **其余数据不迁移**：源文本、`cognee_db`、`cognee.lancedb` 原地打开。
 
+### 9.1 已实测（2026-09-20）
+
+- dump：`migration/dump_graph.py` 在副本上跑通，导出 **6340 节点 / 18400 边 / 2 metadata**（storage version 43）到 `nodes.jsonl`（14MB）/ `edges.jsonl`（20MB）。
+- import：`reflect-mem migrate` 导入并**按 `summary.json` 对账通过** → `graph.sqlite`（35MB）。
+- 验证：`reflect-mem inspect` 直方图与源图一致；`reflect-mem traverse <id> --hops 2` 从「开发习惯（通用版）」到达 27 个节点 + 34 条边，多跳上下文完整。
+
+导入端会移除旧 `graph.sqlite` 后全量重建，并对账「dumper 计数 vs 导入计数 vs 库内计数」，任一不一致即报错退出。
+
 ---
 
 ## 10. 配置
@@ -346,7 +354,7 @@ DATA_ROOT=~/.agents/cognee-memory
 
 ## 11. 风险与待验证项
 
-- **R1 — 迁移完整性**：`LBUG+` 里的边/属性（尤其 `properties` JSON、`source_*` 溯源字段）在 dump 时不能丢。迁移脚本必须先抽样比对，再全量跑。
+- **R1 — 迁移完整性**：✅ **已验证**（2026-09-20）。节点/边/JSON properties/`source_*` 溯源字段完整导出并导入，计数对账通过。见 §9.1。
 - **R2 — LanceDB crate 与 Python 版格式兼容**：✅ **已验证**（2026-09-20）。`lancedb =0.37.1` 可打开、读向量、做最近邻检索，top-1 命中自身。见 §4.4。
 - **R3 — 图的关系镜像**：`cognee_db.nodes/edges` 与图库的冗余关系需要理清。若 GRAPH_COMPLETION 不依赖镜像表，Rust 侧可只维护 `graph.sqlite`，避免双写。
 - **R4 — 抽取质量**：语义兼容（非字节对齐）意味着新旧抽取结果细节不同。需用同 LLM + 相近 prompt 保证实体/关系质量不退化，必要时做小样本 A/B 对比。

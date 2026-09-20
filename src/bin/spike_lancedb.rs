@@ -19,7 +19,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_path = PathBuf::from(&data_root).join("system/databases/cognee.lancedb");
     println!("Opening LanceDB at: {}", db_path.display());
 
-    let db = lancedb::connect(db_path.to_str().unwrap()).execute().await?;
+    let db = lancedb::connect(db_path.to_str().unwrap())
+        .execute()
+        .await?;
     let names = db.table_names().execute().await?;
     println!("Found {} tables: {:?}\n", names.len(), names);
 
@@ -28,7 +30,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Entity_name has {count} rows");
 
     // 1. Pull one real row: its id, and its stored 1024-dim vector.
-    let batches: Vec<_> = table.query().limit(1).execute().await?.try_collect().await?;
+    let batches: Vec<_> = table
+        .query()
+        .limit(1)
+        .execute()
+        .await?
+        .try_collect()
+        .await?;
     let batch = batches.first().ok_or("empty batch")?;
 
     let source_id = batch
