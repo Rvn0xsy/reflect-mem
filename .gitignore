@@ -1,1 +1,3 @@
 /target
+# contains the LLM API key
+.pi/
