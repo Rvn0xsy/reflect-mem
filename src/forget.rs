@@ -211,7 +211,7 @@ pub async fn forget(
             if !surviving.contains(rel) {
                 let id = ids::edge_type_id(rel).to_string();
                 vector_deletes
-                    .entry(format!("EdgeType_relationship_name"))
+                    .entry("EdgeType_relationship_name".to_string())
                     .or_default()
                     .push(id);
             }

@@ -96,12 +96,13 @@ impl VectorStore {
             .await?;
         let mut ids = Vec::new();
         for b in batches {
-            if let Some(col) = b.column_by_name("id") {
-                if let Some(arr) = col.as_any().downcast_ref::<StringArray>() {
-                    for i in 0..arr.len() {
-                        if !arr.is_null(i) {
-                            ids.push(arr.value(i).to_string());
-                        }
+            if let Some(col) = b
+                .column_by_name("id")
+                .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+            {
+                for i in 0..col.len() {
+                    if !col.is_null(i) {
+                        ids.push(col.value(i).to_string());
                     }
                 }
             }
