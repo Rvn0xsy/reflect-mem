@@ -4,8 +4,10 @@
 
 pub mod config;
 pub mod embed;
+pub mod ingest;
 pub mod llm;
 pub mod mcp;
 pub mod migrate;
 pub mod recall;
+pub mod remember;
 pub mod storage;

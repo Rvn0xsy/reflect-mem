@@ -20,8 +20,11 @@ use crate::config;
 use crate::embed::EmbeddingClient;
 use crate::llm::LlmClient;
 use crate::recall::{self, RecallOptions, SearchType};
+use crate::remember;
 use crate::storage::graph::GraphStore;
+use crate::storage::relational::RelationalStore;
 use crate::storage::vector::VectorStore;
+use crate::storage::vector_writer::VectorWriter;
 
 /// State shared by every tool call. Built once, then shared behind an `Arc`.
 pub struct MemoryService {
@@ -29,16 +32,23 @@ pub struct MemoryService {
     llm: LlmClient,
     vectors: VectorStore,
     graph: GraphStore,
+    relational: RelationalStore,
+    vector_writer: VectorWriter,
 }
 
 impl MemoryService {
     /// Build from the environment, reusing the existing cognee data root.
     pub async fn from_env() -> anyhow::Result<Self> {
+        let db = lancedb::connect(&config::lancedb_path().to_string_lossy())
+            .execute()
+            .await?;
         Ok(Self {
             embedder: EmbeddingClient::from_env()?,
             llm: LlmClient::from_env()?,
-            vectors: VectorStore::open(&config::lancedb_path()).await?,
             graph: GraphStore::open(&config::graph_db_path())?,
+            relational: RelationalStore::open(&config::relational_db_path())?,
+            vectors: VectorStore::new(db.clone()),
+            vector_writer: VectorWriter::new(db),
         })
     }
 }
@@ -63,6 +73,19 @@ pub struct RecallParams {
     /// Graph expansion depth for `GRAPH_COMPLETION`. Default 2.
     #[serde(default)]
     pub hops: Option<u32>,
+}
+
+/// Parameters for `remember`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RememberParams {
+    /// The text to store as permanent memory.
+    pub data: String,
+    /// Target dataset. Defaults to `main_dataset`.
+    #[serde(default)]
+    pub dataset_name: Option<String>,
+    /// Optional hint steering entity extraction.
+    #[serde(default)]
+    pub custom_prompt: Option<String>,
 }
 
 /// The MCP server.
@@ -133,6 +156,55 @@ impl MemoryServer {
         .map_err(internal)?;
 
         Ok(outcome.answer)
+    }
+
+    /// Store text as permanent memory (ingests + builds knowledge graph).
+    #[tool(
+        name = "remember",
+        description = "Store text as permanent memory: runs entity extraction and             integrates the facts into the knowledge graph. Ingesting the same content             twice is a no-op. Returns a short confirmation with counts."
+    )]
+    pub async fn remember(
+        &self,
+        Parameters(p): Parameters<RememberParams>,
+    ) -> Result<String, ErrorData> {
+        let dataset = p
+            .dataset_name
+            .as_deref()
+            .unwrap_or("main_dataset")
+            .to_string();
+        let ctx = remember::WriteContext {
+            embedder: &self.svc.embedder,
+            llm: &self.svc.llm,
+            graph: &self.svc.graph,
+            relational: &self.svc.relational,
+            vectors: &self.svc.vector_writer,
+        };
+        let report = remember::remember(
+            &p.data,
+            &dataset,
+            p.custom_prompt.as_deref(),
+            &ctx,
+            &remember::StderrProgress::new(),
+        )
+        .await
+        .map_err(internal)?;
+
+        if report.skipped_existing {
+            return Ok(format!(
+                "Already stored (dataset={}, data_id={}); nothing to do.",
+                report.dataset, report.data_id
+            ));
+        }
+        Ok(format!(
+            "Stored in dataset '{}': {} chunk(s), +{} graph nodes, +{} edges, {} vectors. \
+             data_id={}",
+            report.dataset,
+            report.chunks,
+            report.graph_nodes,
+            report.graph_edges,
+            report.vectors,
+            report.data_id
+        ))
     }
 }
 

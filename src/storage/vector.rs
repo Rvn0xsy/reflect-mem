@@ -58,6 +58,11 @@ pub struct VectorStore {
 }
 
 impl VectorStore {
+    /// Wrap an existing connection (shared with the vector writer).
+    pub fn new(db: lancedb::Connection) -> Self {
+        Self { db }
+    }
+
     /// Open the store at `path` (the `cognee.lancedb` directory).
     pub async fn open(path: &Path) -> Result<Self> {
         let db = lancedb::connect(&path.to_string_lossy())

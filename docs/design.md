@@ -416,3 +416,26 @@ DATA_ROOT=~/.agents/cognee-memory
 - `tools/call recall {search_type: GRAPH_COMPLETION}` 返回正确的多跳答案。
 
 `graph.sqlite` 已迁移到正式位置：`~/.agents/cognee-memory/system/databases/graph.sqlite`（新增文件，不触碰 cognee 原有任何文件）。
+
+### 13.2 写路径规格（已从 cognee 源码 + 真实数据双重验证）
+
+**确定性 ID**（`norm = lowercase + 空格→_ + 去撇号`，NAMESPACE_OID）：
+
+- `Entity` id = uuid5("Entity:" + norm(name))
+- `EntityType` id = uuid5("EntityType:" + norm(type))
+- `EdgeType` id = uuid5("EdgeType:" + norm(rel))
+- `edge_object_id` = uuid5(norm(source_id + rel + target_id))
+- `TextSummary` id = uuid5(chunk_id, "TextSummary")
+- DocumentChunk / TextDocument：uuid4（随机）
+
+**节点 rank**：Entity=0、EntityType=0、TextDocument=1、DocumentChunk=2、TextSummary=3。
+
+**图结构**（实测直方图）：`DocumentChunk -[contains]-> Entity`、`Entity -[is_a]-> EntityType`、`Entity -[LLM关系]-> Entity`、`TextSummary -[made_from]-> DocumentChunk`、`DocumentChunk -[is_part_of]-> TextDocument`。
+
+**边属性**：`{source_node_id, target_node_id, relationship_name, updated_at "%Y-%m-%d %H:%M:%S", edge_object_id, feedback_weight 0.5, [relationship_type], [edge_text]}`。edge_text 兜底 = `{src} {rel去下划线} {tgt}.`（is_a 即 "X is a Y."）；contains 的 edge_text = "Document chunk mentions {name}: {desc}"。
+
+**LLM 抽取**：system = `generate_graph_prompt.txt`（已全文拿到），响应 = `KnowledgeGraph{nodes:[{id,name,type,description}], edges:[{source_node_id,target_node_id,relationship_name,description}]}`，每 chunk 一次。
+
+**摘要**：prompt = `summarize_content.txt`（两段式：类别 + 独立事实，≤200 tokens），每 chunk 一个 TextSummary。
+
+**LanceDB 写入**：表名 = `{类型}_{index_field}`；嵌入文本 = index_fields 的值（Entity→name、Chunk/Summary→text、EdgeType→relationship_name）；payload 为固定 22 字段 union（id Utf8 / created_at i64 / ... / chunk_index i64 / source_chunk_id Utf8），缺失字段写 null，向量列 FixedSizeList(1024, f32)。

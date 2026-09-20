@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use reflect_mem::embed::EmbeddingClient;
 use reflect_mem::llm::LlmClient;
@@ -65,6 +66,21 @@ enum Commands {
         /// Graph db. Defaults to <DATA_ROOT>/system/databases/graph.sqlite.
         #[arg(long)]
         graph: Option<PathBuf>,
+    },
+    /// Store text as permanent memory (extracts entities + writes graph/vectors).
+    Remember {
+        /// Text to store.
+        #[arg(long)]
+        data: Option<String>,
+        /// Read the content from this file instead of --data.
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// Target dataset.
+        #[arg(long, default_value = "main_dataset")]
+        dataset: String,
+        /// Optional hint steering entity extraction.
+        #[arg(long)]
+        custom_prompt: Option<String>,
     },
     /// Serve the memory API over MCP.
     Mcp {
@@ -171,6 +187,59 @@ async fn main() -> anyhow::Result<()> {
                 out.context_chars
             );
             println!("{}", out.answer);
+        }
+        Commands::Remember {
+            data,
+            file,
+            dataset,
+            custom_prompt,
+        } => {
+            let content = match (data, file) {
+                (Some(d), _) => d,
+                (None, Some(f)) => std::fs::read_to_string(&f)
+                    .with_context(|| format!("reading {}", f.display()))?,
+                _ => anyhow::bail!("provide --data or --file"),
+            };
+            let embedder = reflect_mem::embed::EmbeddingClient::from_env()?;
+            let llm = LlmClient::from_env()?;
+            let graph = GraphStore::open(&config::graph_db_path())?;
+            let relational = reflect_mem::storage::relational::RelationalStore::open(
+                &config::relational_db_path(),
+            )?;
+            let lance = lancedb::connect(&config::lancedb_path().to_string_lossy())
+                .execute()
+                .await?;
+            let ctx = reflect_mem::remember::WriteContext {
+                embedder: &embedder,
+                llm: &llm,
+                graph: &graph,
+                relational: &relational,
+                vectors: &reflect_mem::storage::vector_writer::VectorWriter::new(lance),
+            };
+            let report = reflect_mem::remember::remember(
+                &content,
+                &dataset,
+                custom_prompt.as_deref(),
+                &ctx,
+                &reflect_mem::remember::StderrProgress::new(),
+            )
+            .await?;
+            if report.skipped_existing {
+                println!(
+                    "already stored: dataset={} data_id={}",
+                    report.dataset, report.data_id
+                );
+            } else {
+                println!(
+                    "stored: dataset={} chunks={} +nodes={} +edges={} vectors={} data_id={}",
+                    report.dataset,
+                    report.chunks,
+                    report.graph_nodes,
+                    report.graph_edges,
+                    report.vectors,
+                    report.data_id
+                );
+            }
         }
         Commands::Mcp { transport } => match transport.as_str() {
             "stdio" => {
