@@ -212,13 +212,18 @@ pub async fn remember(
         dps.len(),
         edges.len()
     ));
-    let (nodes, edges) = to_rows(
+    let (mut nodes, mut edges) = to_rows(
         &dps,
         &edges,
         &dataset_id.to_string(),
         &data_id.to_string(),
         &run_id.to_string(),
     );
+    // CRITICAL: shared entities already carry refs from earlier ingests.
+    // Merging (not replacing) keeps forget from ever hard-deleting a node
+    // another data item still owns.
+    let new_ref = format!("source_ref:v1:{dataset_id}:{data_id}");
+    graph.merge_provenance(&mut nodes, &mut edges, &new_ref);
     let before_nodes = graph.node_count()?;
     let before_edges = graph.edge_count()?;
     graph.insert_nodes(&nodes)?;
@@ -501,6 +506,8 @@ fn to_rows(
                     Value::from(fallback_edge_text(from, to, rel, &names)),
                 );
             }
+            // provenance stamped here; merge_provenance appends for rows
+            // that already exist in the store
             GraphEdge {
                 from_id: from.clone(),
                 to_id: to.clone(),
@@ -508,10 +515,12 @@ fn to_rows(
                 created_at: None,
                 updated_at: None,
                 properties: Some(Value::Object(props).to_string()),
-                source_ref_keys: None,
-                source_dataset_ids: None,
-                source_run_ids: None,
-                source_run_refs: None,
+                source_ref_keys: Some(format!("|source_ref:v1:{dataset_id}:{data_id}|")),
+                source_dataset_ids: Some(format!("|{}|", dataset_id.replace('-', ""))),
+                source_run_ids: Some(format!("|{}|", run_id.replace('-', ""))),
+                source_run_refs: Some(format!(
+                    "|source_run_ref:v1:{run_id}:source_ref:v1:{dataset_id}:{data_id}|"
+                )),
             }
         })
         .collect();

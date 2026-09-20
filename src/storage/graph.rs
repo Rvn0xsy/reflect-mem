@@ -141,6 +141,34 @@ fn qualified(columns: &str, alias: &str) -> String {
         .join(", ")
 }
 
+/// Append `ref_key` to a `|a|b|` provenance list unless already present.
+fn merge_ref(raw: Option<&str>, ref_key: &str) -> String {
+    let kept: Vec<&str> = raw
+        .unwrap_or("")
+        .split('|')
+        .filter(|p| !p.is_empty())
+        .collect();
+    if kept.contains(&ref_key) {
+        return raw.unwrap_or("").to_string();
+    }
+    let mut all = kept;
+    all.push(ref_key);
+    format!("|{}|", all.join("|"))
+}
+
+/// Remove one entry from a `|a|b|` provenance list.
+fn strip_ref(raw: &str, ref_key: &str) -> String {
+    let kept: Vec<&str> = raw
+        .split('|')
+        .filter(|p| !p.is_empty() && *p != ref_key)
+        .collect();
+    if kept.is_empty() {
+        String::new()
+    } else {
+        format!("|{}|", kept.join("|"))
+    }
+}
+
 fn row_to_edge(row: &Row<'_>) -> rusqlite::Result<GraphEdge> {
     Ok(GraphEdge {
         from_id: row.get(0)?,
@@ -334,6 +362,43 @@ impl GraphStore {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Merge a new provenance ref into existing node/edge rows (append if
+    /// absent); rows not yet in the store keep the ref they were given.
+    /// Shared entities accumulate refs, so `forget` can never hard-delete a
+    /// node another data item still owns.
+    pub fn merge_provenance(
+        &self,
+        nodes: &mut [GraphNode],
+        edges: &mut [GraphEdge],
+        ref_key: &str,
+    ) {
+        let conn = self.conn();
+        for n in nodes.iter_mut() {
+            if let Ok(Some(existing)) = conn
+                .query_row(
+                    "SELECT source_ref_keys FROM graph_nodes WHERE id = ?1",
+                    params![n.id],
+                    |r| r.get::<_, Option<String>>(0),
+                )
+                .optional()
+            {
+                n.source_ref_keys = Some(merge_ref(existing.as_deref(), ref_key));
+            }
+        }
+        for e in edges.iter_mut() {
+            if let Ok(Some(existing)) = conn
+                .query_row(
+                    "SELECT source_ref_keys FROM graph_edges WHERE from_id = ?1 AND to_id = ?2 AND relationship_name = ?3",
+                    params![e.from_id, e.to_id, e.relationship_name],
+                    |r| r.get::<_, Option<String>>(0),
+                )
+                .optional()
+            {
+                e.source_ref_keys = Some(merge_ref(existing.as_deref(), ref_key));
+            }
+        }
+    }
+
     /// Out-neighbours of a node, optionally restricted to relationship names.
     pub fn neighbours(&self, id: &str, rel_types: Option<&[String]>) -> Result<Vec<GraphNode>> {
         let node_cols = qualified(NODE_COLUMNS, "n");
@@ -390,6 +455,155 @@ impl GraphStore {
         let conn = self.conn();
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params![ids_json], row_to_edge)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Every node in the store (doctor/repair uses this).
+    pub fn all_nodes(&self) -> Result<Vec<GraphNode>> {
+        let sql = format!("SELECT {NODE_COLUMNS} FROM graph_nodes");
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map([], row_to_node)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn all_node_ids(&self) -> Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT id FROM graph_nodes")?;
+        let rows = stmt.query_map([], |r| r.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Edges whose either endpoint is gone (ref-less leftovers of pre-fix
+    /// writes; provenance-carrying edges are handled by source-ref search).
+    pub fn edges_with_missing_endpoint(&self) -> Result<Vec<(String, String, String)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT from_id, to_id, coalesce(relationship_name,'') FROM graph_edges e
+             WHERE NOT EXISTS (SELECT 1 FROM graph_nodes n WHERE n.id = e.from_id)
+                OR NOT EXISTS (SELECT 1 FROM graph_nodes n WHERE n.id = e.to_id)",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Collapse duplicate edge rows (same from/to/relationship) to one copy.
+    pub fn dedup_edges(&self) -> Result<usize> {
+        let conn = self.conn();
+        Ok(conn.execute(
+            "DELETE FROM graph_edges WHERE rowid NOT IN (
+                 SELECT MIN(rowid) FROM graph_edges
+                 GROUP BY from_id, to_id, relationship_name
+             )",
+            [],
+        )?)
+    }
+
+    /// Delete edges by (from, to) pair, any relationship.
+    pub fn delete_edges_by_endpoints(&self, keys: &[(String, String)]) -> Result<usize> {
+        if keys.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn();
+        let mut n = 0;
+        for (from, to) in keys {
+            n += conn.execute(
+                "DELETE FROM graph_edges WHERE from_id = ?1 AND to_id = ?2",
+                params![from, to],
+            )?;
+        }
+        Ok(n)
+    }
+
+    /// All nodes carrying a provenance ref (e.g. `source_ref:v1:<ds>:<data>`).
+    pub fn nodes_with_source_ref(&self, ref_key: &str) -> Result<Vec<GraphNode>> {
+        let sql = format!(
+            "SELECT {NODE_COLUMNS} FROM graph_nodes
+             WHERE source_ref_keys LIKE '%' || ?1 || '%'"
+        );
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![ref_key], row_to_node)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// All edges carrying a provenance ref.
+    pub fn edges_with_source_ref(&self, ref_key: &str) -> Result<Vec<GraphEdge>> {
+        let sql = format!(
+            "SELECT {EDGE_COLUMNS} FROM graph_edges
+             WHERE source_ref_keys LIKE '%' || ?1 || '%'"
+        );
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![ref_key], row_to_edge)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Drop one provenance ref from surviving nodes (idempotent detach).
+    pub fn detach_source_ref_from_nodes(
+        &self,
+        ref_key: &str,
+        node_ids: &[String],
+    ) -> Result<usize> {
+        if node_ids.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn();
+        let mut n = 0;
+        for id in node_ids {
+            let current: Option<String> = conn
+                .query_row(
+                    "SELECT source_ref_keys FROM graph_nodes WHERE id = ?1",
+                    params![id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(raw) = current {
+                let stripped = strip_ref(&raw, ref_key);
+                n += conn.execute(
+                    "UPDATE graph_nodes SET source_ref_keys = ?2 WHERE id = ?1",
+                    params![id, stripped],
+                )?;
+            }
+        }
+        Ok(n)
+    }
+
+    /// Hard-delete edges by id.
+    pub fn delete_edges(&self, edge_keys: &[(String, String, String)]) -> Result<usize> {
+        if edge_keys.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn();
+        let mut n = 0;
+        for (from, to, rel) in edge_keys {
+            n += conn.execute(
+                "DELETE FROM graph_edges WHERE from_id = ?1 AND to_id = ?2 AND relationship_name = ?3",
+                params![from, to, rel],
+            )?;
+        }
+        Ok(n)
+    }
+
+    /// Hard-delete nodes by id (their edges should be deleted first).
+    pub fn delete_nodes(&self, node_ids: &[String]) -> Result<usize> {
+        if node_ids.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn();
+        let mut n = 0;
+        for id in node_ids {
+            n += conn.execute("DELETE FROM graph_nodes WHERE id = ?1", params![id])?;
+        }
+        Ok(n)
+    }
+
+    /// Distinct relationship names still present on any edge.
+    pub fn surviving_relationship_names(&self) -> Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt =
+            conn.prepare("SELECT DISTINCT coalesce(relationship_name,'') FROM graph_edges")?;
+        let rows = stmt.query_map([], |r| r.get(0))?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 

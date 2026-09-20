@@ -15,9 +15,11 @@ use rmcp::model::{ErrorData, Implementation, ServerCapabilities, ServerConfig};
 use rmcp::schemars::JsonSchema;
 use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 use serde::Deserialize;
+use uuid::Uuid;
 
 use crate::config;
 use crate::embed::EmbeddingClient;
+use crate::forget;
 use crate::llm::LlmClient;
 use crate::recall::{self, RecallOptions, SearchType};
 use crate::remember;
@@ -34,6 +36,12 @@ pub struct MemoryService {
     graph: GraphStore,
     relational: RelationalStore,
     vector_writer: VectorWriter,
+}
+
+/// forgeUuid parse helper for tool params.
+fn parse_uuid(raw: &str, what: &str) -> std::result::Result<Uuid, ErrorData> {
+    Uuid::parse_str(raw)
+        .map_err(|_| ErrorData::invalid_params(format!("{what} must be a UUID, got {raw:?}"), None))
 }
 
 impl MemoryService {
@@ -73,6 +81,23 @@ pub struct RecallParams {
     /// Graph expansion depth for `GRAPH_COMPLETION`. Default 2.
     #[serde(default)]
     pub hops: Option<u32>,
+}
+
+/// Parameters for `forget`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ForgetParams {
+    /// Remove one data item by UUID (requires dataset_name).
+    #[serde(default)]
+    pub data_id: Option<String>,
+    /// Forget everything in this dataset.
+    #[serde(default)]
+    pub dataset: Option<String>,
+    /// Dataset UUID alternative to dataset.
+    #[serde(default)]
+    pub dataset_id: Option<String>,
+    /// Wipe all memory. Irreversible.
+    #[serde(default)]
+    pub everything: bool,
 }
 
 /// Parameters for `remember`.
@@ -156,6 +181,45 @@ impl MemoryServer {
         .map_err(internal)?;
 
         Ok(outcome.answer)
+    }
+
+    /// Remove memory items (graph nodes/edges, vectors, relational rows).
+    #[tool(
+        name = "forget",
+        description = "Forget stored memory. Pass data_id + dataset to forget one item,             dataset to forget everything in a dataset, or everything=true to wipe all memory.             Shared entities referenced by surviving memories are kept; only the reference             is detached. Irreversible."
+    )]
+    pub async fn forget(
+        &self,
+        Parameters(p): Parameters<ForgetParams>,
+    ) -> Result<String, ErrorData> {
+        let data_id = match &p.data_id {
+            Some(raw) => Some(parse_uuid(raw, "data_id")?),
+            None => None,
+        };
+        let dataset_id = match &p.dataset_id {
+            Some(raw) => Some(parse_uuid(raw, "dataset_id")?),
+            None => None,
+        };
+        let target = forget::resolve_target(data_id, p.dataset.clone(), dataset_id, p.everything)
+            .map_err(internal)?;
+        let report = forget::forget(
+            &target,
+            &self.svc.graph,
+            &self.svc.relational,
+            &self.svc.vectors,
+            &self.svc.vector_writer,
+        )
+        .await
+        .map_err(internal)?;
+        Ok(format!(
+            "Forgot {} data item(s): removed {} nodes ({} shared kept), {} edges, {} vectors, {} datasets.",
+            report.data_items,
+            report.nodes_deleted,
+            report.nodes_detached,
+            report.edges_deleted,
+            report.vectors_deleted,
+            report.datasets_deleted
+        ))
     }
 
     /// Store text as permanent memory (ingests + builds knowledge graph).

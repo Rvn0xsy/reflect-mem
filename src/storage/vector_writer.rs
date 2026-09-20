@@ -186,6 +186,42 @@ pub fn build_batch(schema: &Schema, rows: &[VectorRow]) -> Result<RecordBatch> {
     )?)
 }
 
+/// Append pre-embedded rows to `table`, creating it with the canonical schema
+/// when absent. Used by the writer and by `doctor` healing.
+pub async fn append_rows(
+    db: &lancedb::Connection,
+    table: &str,
+    dims: usize,
+    rows: &[VectorRow],
+) -> Result<usize> {
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let existing = db.open_table(table).execute().await.ok();
+    let batch = match &existing {
+        Some(t) => {
+            let schema = t.schema().await?;
+            build_batch(&schema, rows)?
+        }
+        None => {
+            let schema = canonical_schema(dims);
+            let empty = RecordBatch::new_empty(Arc::new(schema.clone()));
+            db.create_table(table, empty)
+                .execute()
+                .await
+                .with_context(|| format!("creating vector table {table}"))?;
+            build_batch(&schema, rows)?
+        }
+    };
+    let t = db.open_table(table).execute().await?;
+    t.add(batch)
+        .mode(AddDataMode::Append)
+        .execute()
+        .await
+        .with_context(|| format!("appending {} rows to {table}", rows.len()))?;
+    Ok(rows.len())
+}
+
 /// Writes datapoint embeddings, grouped per cognee table.
 pub struct VectorWriter {
     db: lancedb::Connection,
@@ -203,7 +239,6 @@ impl VectorWriter {
         }
         let dims = embedder.dimensions();
 
-        // group by table name
         let mut groups: std::collections::BTreeMap<String, Vec<&Datapoint>> =
             std::collections::BTreeMap::new();
         for dp in dps {
@@ -222,8 +257,6 @@ impl VectorWriter {
         for (table, group) in groups {
             let texts: Vec<String> = group.iter().map(|d| d.embeddable_text.clone()).collect();
             let vectors = embedder.embed_batch(&texts).await?;
-
-            let existing = self.db.open_table(&table).execute().await.ok();
             let rows: Vec<VectorRow> = group
                 .iter()
                 .zip(vectors)
@@ -233,32 +266,7 @@ impl VectorWriter {
                     payload: Value::Object(dp.properties.clone()),
                 })
                 .collect();
-
-            let batch = match &existing {
-                Some(t) => {
-                    let schema = t.schema().await?;
-                    build_batch(&schema, &rows)?
-                }
-                None => {
-                    let schema = canonical_schema(dims);
-                    // create the table from an empty batch carrying the schema
-                    let empty = RecordBatch::new_empty(Arc::new(schema.clone()));
-                    self.db
-                        .create_table(&table, empty)
-                        .execute()
-                        .await
-                        .with_context(|| format!("creating vector table {table}"))?;
-                    build_batch(&schema, &rows)?
-                }
-            };
-
-            let t = self.db.open_table(&table).execute().await?;
-            t.add(batch)
-                .mode(AddDataMode::Append)
-                .execute()
-                .await
-                .with_context(|| format!("appending {} rows to {table}", rows.len()))?;
-            written += rows.len();
+            written += append_rows(&self.db, &table, dims, &rows).await?;
         }
         Ok(written)
     }

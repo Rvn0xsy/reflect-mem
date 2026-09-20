@@ -8,6 +8,7 @@ use reflect_mem::recall::{RecallOptions, SearchType};
 use reflect_mem::storage::graph::GraphStore;
 use reflect_mem::storage::vector::VectorStore;
 use reflect_mem::{config, migrate, recall};
+use uuid::Uuid;
 
 #[derive(Parser)]
 #[command(
@@ -81,6 +82,26 @@ enum Commands {
         /// Optional hint steering entity extraction.
         #[arg(long)]
         custom_prompt: Option<String>,
+    },
+    /// Remove memory (graph + vectors + relational rows).
+    Forget {
+        /// Specific data item to remove (requires --dataset).
+        #[arg(long)]
+        data_id: Option<String>,
+        /// Dataset to forget (all its data).
+        #[arg(long)]
+        dataset: Option<String>,
+        /// Everything the user owns.
+        #[arg(long, default_value_t = false)]
+        everything: bool,
+    },
+    /// Verify and repair store consistency (needs a migration dump to restore).
+    Doctor {
+        /// Directory with nodes.jsonl (the migration dump) to restore from.
+        #[arg(long, default_value = "./migration/out")]
+        dump: PathBuf,
+        #[arg(long, default_value_t = false)]
+        heal_vectors: bool,
     },
     /// Serve the memory API over MCP.
     Mcp {
@@ -238,6 +259,59 @@ async fn main() -> anyhow::Result<()> {
                     report.graph_edges,
                     report.vectors,
                     report.data_id
+                );
+            }
+        }
+        Commands::Forget {
+            data_id,
+            dataset,
+            everything,
+        } => {
+            let data_id = match data_id {
+                Some(h) => Some(Uuid::parse_str(&h).context("data_id must be a UUID")?),
+                None => None,
+            };
+            let target = reflect_mem::forget::resolve_target(data_id, dataset, None, everything)?;
+            let (graph, relational, vectors, writer) =
+                reflect_mem::forget::default_context().await?;
+            let report =
+                reflect_mem::forget::forget(&target, &graph, &relational, &vectors, &writer)
+                    .await?;
+            println!(
+                "forgot: {} data item(s), -{} nodes ({} detached), -{} edges, -{} vectors, -{} datasets",
+                report.data_items,
+                report.nodes_deleted,
+                report.nodes_detached,
+                report.edges_deleted,
+                report.vectors_deleted,
+                report.datasets_deleted
+            );
+        }
+        Commands::Doctor { dump, heal_vectors } => {
+            let graph = GraphStore::open(&config::graph_db_path())?;
+            let nodes_path = dump.join("nodes.jsonl");
+            let dump_text = std::fs::read_to_string(&nodes_path)
+                .with_context(|| format!("reading {}", nodes_path.display()))?;
+            let dump_nodes: Vec<serde_json::Value> = dump_text
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(serde_json::from_str)
+                .collect::<Result<_, _>>()
+                .context("parsing dump")?;
+            let report = reflect_mem::doctor::repair_graph_from_dump(&graph, &dump_nodes)?;
+            println!(
+                "repair: restored {} nodes, removed {} dangling edges",
+                report.nodes_restored, report.edges_deleted
+            );
+            if heal_vectors {
+                let embedder = reflect_mem::embed::EmbeddingClient::from_env()?;
+                let vectors =
+                    reflect_mem::storage::vector::VectorStore::open(&config::lancedb_path())
+                        .await?;
+                let healed = reflect_mem::doctor::heal_vectors(&graph, &vectors, &embedder).await?;
+                println!(
+                    "heal: +{} vectors, -{} stale vectors",
+                    healed.vectors_added, healed.vectors_purged
                 );
             }
         }

@@ -3,7 +3,9 @@
 //! See `docs/design.md` for the full design.
 
 pub mod config;
+pub mod doctor;
 pub mod embed;
+pub mod forget;
 pub mod ingest;
 pub mod llm;
 pub mod mcp;

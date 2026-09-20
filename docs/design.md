@@ -394,9 +394,9 @@ DATA_ROOT=~/.agents/cognee-memory
 | 2. 迁移器 | ✅ | `migration/dump_graph.py` + `reflect-mem migrate`（含对账） |
 | 3. 存储层 | 🟡 | 图 ✅ / 向量 ✅ / 关系层待接 / 会话缓存待建 |
 | 4. recall | ✅ | `SUMMARIES` + `GRAPH_COMPLETION` 均已跑通（CLI） |
-| 5. remember | ⬜ | 会话快路径 + 永久 ETL |
-| 6. forget | ⬜ | 跨库删除 |
-| 7. MCP 层 | 🟡 | rmcp + stdio ✅（`recall` 工具）；streamable HTTP 待做 |
+| 5. remember | ✅ | 永久 ETL（会话快路径待做） |
+| 6. forget | ✅ | provenance 分区删除 + doctor 修复 |
+| 7. MCP 层 | 🟡 | rmcp + stdio ✅（recall/remember/forget）；streamable HTTP 待做 |
 | 8. 切换 | ⬜ | 迁移 → Rust 独占 → Python 退役 |
 
 已落地模块：`config` / `storage::graph` / `storage::vector` / `migrate` / `embed` / `llm` / `recall` / `mcp`。
@@ -439,3 +439,16 @@ DATA_ROOT=~/.agents/cognee-memory
 **摘要**：prompt = `summarize_content.txt`（两段式：类别 + 独立事实，≤200 tokens），每 chunk 一个 TextSummary。
 
 **LanceDB 写入**：表名 = `{类型}_{index_field}`；嵌入文本 = index_fields 的值（Entity→name、Chunk/Summary→text、EdgeType→relationship_name）；payload 为固定 22 字段 union（id Utf8 / created_at i64 / ... / chunk_index i64 / source_chunk_id Utf8），缺失字段写 null，向量列 FixedSizeList(1024, f32)。
+
+### 13.3 写/删路径实测（2026-09-20）
+
+- `remember`：15.4s（LLM 为主：抽取 9.7s + 摘要 5.6s），14 datapoints 全部落库。
+- 确定性 ID 实测：新写入 `Entity(reflect-mem)` = uuid5 推导值，逐字节一致。
+- `forget`：provenance 分区正确——共享实体只 detach（保留），无主节点硬删（图/向量/关系层三库同步）。
+- 完整 write→forget 循环后，图与向量表**精确回到基线**（6340/18399；向量经 heal 去重后 5100/577/271/271/120/122）。
+- `doctor`：从迁移 dump 恢复丢失节点、清理悬挂边、按图 heals 向量表（补缺、清孤、同 id 去重）。
+
+**修复过的 bug**（都值得记住）：
+1. `ensure_dataset` 重入 Mutex 自死锁——"6 分钟没反应"的真相。
+2. 写路径用 REPLACE 覆盖共享实体的 provenance → forget 误删共享实体。已改为**合并** refs。
+3. forget 分区逻辑最初用「ref 出现次数」而非「去掉后是否无主」判断，同样会误删共享实体。

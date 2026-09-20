@@ -76,6 +76,39 @@ impl VectorStore {
         Ok(self.db.table_names().execute().await?)
     }
 
+    /// Connection handle (doctor shares it with the writer).
+    pub fn connection(&self) -> &lancedb::Connection {
+        &self.db
+    }
+
+    /// All ids in a table (empty if the table does not exist).
+    pub async fn table_ids(&self, table: &str) -> Result<Vec<String>> {
+        let t = match self.db.open_table(table).execute().await {
+            Ok(t) => t,
+            Err(_) => return Ok(Vec::new()),
+        };
+        let batches: Vec<_> = t
+            .query()
+            .select(lancedb::query::Select::Columns(vec!["id".to_string()]))
+            .execute()
+            .await?
+            .try_collect()
+            .await?;
+        let mut ids = Vec::new();
+        for b in batches {
+            if let Some(col) = b.column_by_name("id") {
+                if let Some(arr) = col.as_any().downcast_ref::<StringArray>() {
+                    for i in 0..arr.len() {
+                        if !arr.is_null(i) {
+                            ids.push(arr.value(i).to_string());
+                        }
+                    }
+                }
+            }
+        }
+        Ok(ids)
+    }
+
     pub async fn count_rows(&self, table: &str) -> Result<usize> {
         let t = self.db.open_table(table).execute().await?;
         Ok(t.count_rows(None).await?)
@@ -137,6 +170,27 @@ impl VectorStore {
             }
         }
         Ok(hits)
+    }
+
+    /// Delete rows whose `id` is in `ids`. Returns rows removed (best effort).
+    pub async fn delete_by_ids(&self, table: &str, ids: &[String]) -> Result<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let t = self
+            .db
+            .open_table(table)
+            .execute()
+            .await
+            .with_context(|| format!("opening vector table {table}"))?;
+        let list = ids
+            .iter()
+            .map(|i| format!("'{}'", i.replace('\'', "''")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let predicate = format!("id IN ({list})");
+        let result = t.delete(predicate.as_str()).await?;
+        Ok(result.num_deleted_rows as usize)
     }
 
     /// Pull the stored vector for an id from `table` (used to validate reuse).

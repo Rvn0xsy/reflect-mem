@@ -139,6 +139,61 @@ impl RelationalStore {
         Ok(())
     }
 
+    /// Resolve a dataset name to its (dashed) UUID.
+    pub fn dataset_id(&self, name: &str) -> Result<Uuid> {
+        let conn = self.conn();
+        let hex: String = conn
+            .query_row(
+                "SELECT id FROM datasets WHERE name = ?1",
+                params![name],
+                |r| r.get(0),
+            )
+            .optional()?
+            .with_context(|| format!("dataset {name:?} not found"))?;
+        parse_dashless(&hex)
+    }
+
+    /// All data ids (dashed UUIDs) inside a dataset.
+    pub fn data_ids_for_dataset(&self, dataset_id: Uuid) -> Result<Vec<Uuid>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT id FROM data WHERE dataset_id = ?1")?;
+        let rows = stmt.query_map(params![dashless(dataset_id)], |r| r.get::<_, String>(0))?;
+        let hexes = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        hexes.iter().map(|h| parse_dashless(h)).collect()
+    }
+
+    /// Delete one `data` row.
+    pub fn delete_data(&self, data_id: Uuid) -> Result<()> {
+        let conn = self.conn();
+        conn.execute("DELETE FROM data WHERE id = ?1", params![dashless(data_id)])?;
+        Ok(())
+    }
+
+    /// Delete a dataset row (caller is responsible for its data).
+    pub fn delete_dataset(&self, name: &str) -> Result<()> {
+        let conn = self.conn();
+        conn.execute("DELETE FROM datasets WHERE name = ?1", params![name])?;
+        Ok(())
+    }
+
+    /// All datasets as (dashed uuid, name).
+    pub fn all_datasets(&self) -> Result<Vec<(Uuid, String)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT id, name FROM datasets")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let pairs = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        pairs
+            .iter()
+            .map(|(h, n)| Ok((parse_dashless(h)?, n.clone())))
+            .collect()
+    }
+
+    /// Delete every dataset row (Everything mode); returns the count.
+    pub fn delete_all_datasets(&self) -> Result<usize> {
+        let conn = self.conn();
+        Ok(conn.execute("DELETE FROM datasets", [])?)
+    }
+
     /// Flip `pipeline_status` to completed after the graph/vector writes land.
     pub fn mark_data_processed(&self, data_id: Uuid, dataset_id: Uuid, run_id: Uuid) -> Result<()> {
         let conn = self.conn();
