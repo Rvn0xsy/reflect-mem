@@ -5,6 +5,7 @@
 pub mod config;
 pub mod embed;
 pub mod llm;
+pub mod mcp;
 pub mod migrate;
 pub mod recall;
 pub mod storage;

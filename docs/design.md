@@ -396,13 +396,23 @@ DATA_ROOT=~/.agents/cognee-memory
 | 4. recall | ✅ | `SUMMARIES` + `GRAPH_COMPLETION` 均已跑通（CLI） |
 | 5. remember | ⬜ | 会话快路径 + 永久 ETL |
 | 6. forget | ⬜ | 跨库删除 |
-| 7. MCP 层 | ⬜ | rmcp + stdio/streamable HTTP |
+| 7. MCP 层 | 🟡 | rmcp + stdio ✅（`recall` 工具）；streamable HTTP 待做 |
 | 8. 切换 | ⬜ | 迁移 → Rust 独占 → Python 退役 |
 
-已落地模块：`config` / `storage::graph` / `storage::vector` / `migrate` / `embed` / `llm` / `recall`。
+已落地模块：`config` / `storage::graph` / `storage::vector` / `migrate` / `embed` / `llm` / `recall` / `mcp`。
+
+**注意**：MCP 目前只暴露 `recall`（读路径）。`remember`/`forget`（写路径）**刻意未实现**——写必须逐字匹配 cognee 的图/向量 schema，仓促实现会污染真实的 651MB 记忆库。
 
 实测记录（2026-09-20）：
 
 - 图：6340 节点 / 18400 边迁移完成，多跳遍历正确。
 - 向量：7 张表原地可读可检索，1024 维一致。
 - recall：`SUMMARIES` 与 `GRAPH_COMPLETION` 端到端跑通；后者能答出前者漏掉的图内事实（如「不提交生成物」）。
+
+### 13.1 MCP 验证（2026-09-20）
+
+- `initialize` 握手成功：serverInfo=`reflect-mem 0.1.0`，协议协商到 `2025-11-25`。
+- `tools/list` 返回 `recall` 工具。
+- `tools/call recall {search_type: GRAPH_COMPLETION}` 返回正确的多跳答案。
+
+`graph.sqlite` 已迁移到正式位置：`~/.agents/cognee-memory/system/databases/graph.sqlite`（新增文件，不触碰 cognee 原有任何文件）。

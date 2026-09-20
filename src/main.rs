@@ -66,6 +66,12 @@ enum Commands {
         #[arg(long)]
         graph: Option<PathBuf>,
     },
+    /// Serve the memory API over MCP.
+    Mcp {
+        /// Transport to serve on. Supported: stdio.
+        #[arg(long, default_value = "stdio")]
+        transport: String,
+    },
 }
 
 #[tokio::main]
@@ -166,6 +172,17 @@ async fn main() -> anyhow::Result<()> {
             );
             println!("{}", out.answer);
         }
+        Commands::Mcp { transport } => match transport.as_str() {
+            "stdio" => {
+                // stdout is the protocol channel here: never print to it.
+                eprintln!("reflect-mem MCP serving on stdio");
+                reflect_mem::mcp::MemoryServer::from_env()
+                    .await?
+                    .serve_stdio()
+                    .await?;
+            }
+            other => anyhow::bail!("unsupported transport {other:?}; expected stdio"),
+        },
     }
     Ok(())
 }
