@@ -7,6 +7,7 @@
 //! See `docs/design.md` §4.3.
 
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, Row, params};
@@ -156,8 +157,13 @@ fn row_to_edge(row: &Row<'_>) -> rusqlite::Result<GraphEdge> {
 }
 
 /// A SQLite-backed property graph.
+///
+/// The connection sits behind a `Mutex` because `rusqlite::Connection` is
+/// `Send` but not `Sync`; without this the server's request futures would not
+/// be `Send` and could not be spawned. The lock is only ever held for a
+/// synchronous statement — never across an `await`.
 pub struct GraphStore {
-    conn: Connection,
+    conn: Mutex<Connection>,
 }
 
 impl GraphStore {
@@ -183,12 +189,21 @@ impl GraphStore {
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.execute_batch(SCHEMA)
             .context("initialising graph schema")?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
+    }
+
+    /// Lock the connection. A poisoned mutex still yields a usable connection:
+    /// the earlier panic did not corrupt SQLite's state.
+    fn conn(&self) -> MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Bulk-insert nodes inside a single transaction.
-    pub fn insert_nodes(&mut self, nodes: &[GraphNode]) -> Result<usize> {
-        let tx = self.conn.transaction()?;
+    pub fn insert_nodes(&self, nodes: &[GraphNode]) -> Result<usize> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
         {
             let mut stmt = tx.prepare_cached(
                 "INSERT OR REPLACE INTO graph_nodes (
@@ -216,8 +231,9 @@ impl GraphStore {
     }
 
     /// Bulk-insert edges inside a single transaction.
-    pub fn insert_edges(&mut self, edges: &[GraphEdge]) -> Result<usize> {
-        let tx = self.conn.transaction()?;
+    pub fn insert_edges(&self, edges: &[GraphEdge]) -> Result<usize> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
         {
             let mut stmt = tx.prepare_cached(
                 "INSERT INTO graph_edges (
@@ -245,8 +261,9 @@ impl GraphStore {
     }
 
     /// Insert `(key, value)` metadata rows.
-    pub fn insert_metadata(&mut self, rows: &[(String, String)]) -> Result<usize> {
-        let tx = self.conn.transaction()?;
+    pub fn insert_metadata(&self, rows: &[(String, String)]) -> Result<usize> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
         {
             let mut stmt = tx.prepare_cached(
                 "INSERT OR REPLACE INTO graph_metadata (key, value) VALUES (?1, ?2)",
@@ -260,20 +277,18 @@ impl GraphStore {
     }
 
     pub fn node_count(&self) -> Result<i64> {
-        Ok(self
-            .conn
-            .query_row("SELECT count(*) FROM graph_nodes", [], |r| r.get(0))?)
+        let conn = self.conn();
+        Ok(conn.query_row("SELECT count(*) FROM graph_nodes", [], |r| r.get(0))?)
     }
 
     pub fn edge_count(&self) -> Result<i64> {
-        Ok(self
-            .conn
-            .query_row("SELECT count(*) FROM graph_edges", [], |r| r.get(0))?)
+        let conn = self.conn();
+        Ok(conn.query_row("SELECT count(*) FROM graph_edges", [], |r| r.get(0))?)
     }
 
     pub fn metadata(&self, key: &str) -> Result<Option<String>> {
-        Ok(self
-            .conn
+        let conn = self.conn();
+        Ok(conn
             .query_row(
                 "SELECT value FROM graph_metadata WHERE key = ?1",
                 params![key],
@@ -284,23 +299,23 @@ impl GraphStore {
 
     pub fn node_by_id(&self, id: &str) -> Result<Option<GraphNode>> {
         let sql = format!("SELECT {NODE_COLUMNS} FROM graph_nodes WHERE id = ?1");
-        Ok(self
-            .conn
-            .query_row(&sql, params![id], row_to_node)
-            .optional()?)
+        let conn = self.conn();
+        Ok(conn.query_row(&sql, params![id], row_to_node).optional()?)
     }
 
     /// All nodes of a given `type` (Entity, DocumentChunk, ...).
     pub fn nodes_by_type(&self, type_: &str) -> Result<Vec<GraphNode>> {
         let sql = format!("SELECT {NODE_COLUMNS} FROM graph_nodes WHERE type = ?1");
-        let mut stmt = self.conn.prepare(&sql)?;
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params![type_], row_to_node)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     /// Node type histogram, descending by count.
     pub fn node_type_counts(&self) -> Result<Vec<(String, i64)>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
             "SELECT coalesce(type, '') AS t, count(*) AS c FROM graph_nodes
              GROUP BY t ORDER BY c DESC",
         )?;
@@ -310,7 +325,8 @@ impl GraphStore {
 
     /// Relationship histogram, descending by count.
     pub fn relationship_counts(&self) -> Result<Vec<(String, i64)>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
             "SELECT coalesce(relationship_name, '') AS r, count(*) AS c FROM graph_edges
              GROUP BY r ORDER BY c DESC",
         )?;
@@ -334,7 +350,8 @@ impl GraphStore {
                  WHERE e.from_id = ?1"
             ),
         };
-        let mut stmt = self.conn.prepare(&sql)?;
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&sql)?;
         let rows = match rel_types {
             Some(rels) if !rels.is_empty() => {
                 let json = serde_json::to_string(rels)?;
@@ -352,7 +369,8 @@ impl GraphStore {
     /// LLM the actual relationships between reached nodes.
     pub fn edges_from(&self, id: &str) -> Result<Vec<GraphEdge>> {
         let sql = format!("SELECT {EDGE_COLUMNS} FROM graph_edges WHERE from_id = ?1");
-        let mut stmt = self.conn.prepare(&sql)?;
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params![id], row_to_edge)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
@@ -369,7 +387,8 @@ impl GraphStore {
              WHERE from_id IN (SELECT value FROM json_each(?1))
                AND to_id   IN (SELECT value FROM json_each(?1))"
         );
-        let mut stmt = self.conn.prepare(&sql)?;
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params![ids_json], row_to_edge)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
@@ -412,7 +431,8 @@ impl GraphStore {
              JOIN (SELECT id, min(depth) AS depth FROM walk GROUP BY id) w2 ON w2.id = n.id"
         );
 
-        let mut stmt = self.conn.prepare(&sql)?;
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&sql)?;
         let map = |row: &Row<'_>| -> rusqlite::Result<ReachedNode> {
             Ok(ReachedNode {
                 node: row_to_node(row)?,
@@ -469,7 +489,7 @@ mod tests {
 
     #[test]
     fn insert_and_count() {
-        let mut g = GraphStore::open_in_memory().unwrap();
+        let g = GraphStore::open_in_memory().unwrap();
         g.insert_nodes(&[node("a", "A", "Entity"), node("b", "B", "Entity")])
             .unwrap();
         g.insert_edges(&[edge("a", "b", "is_a")]).unwrap();
@@ -488,7 +508,7 @@ mod tests {
 
     #[test]
     fn traversal_reaches_k_hops_and_stops() {
-        let mut g = GraphStore::open_in_memory().unwrap();
+        let g = GraphStore::open_in_memory().unwrap();
         g.insert_nodes(&[
             node("a", "A", "Entity"),
             node("b", "B", "Entity"),
@@ -515,7 +535,7 @@ mod tests {
 
     #[test]
     fn traversal_handles_cycles() {
-        let mut g = GraphStore::open_in_memory().unwrap();
+        let g = GraphStore::open_in_memory().unwrap();
         g.insert_nodes(&[node("a", "A", "Entity"), node("b", "B", "Entity")])
             .unwrap();
         g.insert_edges(&[edge("a", "b", "x"), edge("b", "a", "x")])
@@ -527,7 +547,7 @@ mod tests {
 
     #[test]
     fn traversal_filters_relationship_types() {
-        let mut g = GraphStore::open_in_memory().unwrap();
+        let g = GraphStore::open_in_memory().unwrap();
         g.insert_nodes(&[
             node("a", "A", "Entity"),
             node("b", "B", "Entity"),
@@ -547,7 +567,7 @@ mod tests {
 
     #[test]
     fn metadata_roundtrip() {
-        let mut g = GraphStore::open_in_memory().unwrap();
+        let g = GraphStore::open_in_memory().unwrap();
         g.insert_metadata(&[("provenance_version".into(), "1".into())])
             .unwrap();
         assert_eq!(

@@ -1,7 +1,12 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use reflect_mem::{config, migrate, storage::graph::GraphStore};
+use reflect_mem::embed::EmbeddingClient;
+use reflect_mem::llm::LlmClient;
+use reflect_mem::recall::{RecallOptions, SearchType};
+use reflect_mem::storage::graph::GraphStore;
+use reflect_mem::storage::vector::VectorStore;
+use reflect_mem::{config, migrate, recall};
 
 #[derive(Parser)]
 #[command(
@@ -42,9 +47,29 @@ enum Commands {
         #[arg(long)]
         graph: Option<PathBuf>,
     },
+    /// List the reused LanceDB vector tables and their row counts.
+    Vectors,
+    /// Search memory and synthesise an answer.
+    Recall {
+        /// Natural-language question.
+        query: String,
+        /// SUMMARIES or GRAPH_COMPLETION.
+        #[arg(long, default_value = "SUMMARIES")]
+        search_type: String,
+        /// Vector hits to retrieve.
+        #[arg(long, default_value_t = 5)]
+        top_k: usize,
+        /// Graph expansion depth (GRAPH_COMPLETION only).
+        #[arg(long, default_value_t = 2)]
+        hops: u32,
+        /// Graph db. Defaults to <DATA_ROOT>/system/databases/graph.sqlite.
+        #[arg(long)]
+        graph: Option<PathBuf>,
+    },
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Migrate { input, graph } => {
@@ -101,6 +126,45 @@ fn main() -> anyhow::Result<()> {
                     e.to_id
                 );
             }
+        }
+        Commands::Vectors => {
+            let path = config::lancedb_path();
+            let store = VectorStore::open(&path).await?;
+            println!("lancedb: {}", path.display());
+            for table in store.table_names().await? {
+                println!("  {:>8}  {table}", store.count_rows(&table).await?);
+            }
+        }
+        Commands::Recall {
+            query,
+            search_type,
+            top_k,
+            hops,
+            graph,
+        } => {
+            let search_type = SearchType::parse(&search_type)?;
+            let embedder = EmbeddingClient::from_env()?;
+            let vectors = VectorStore::open(&config::lancedb_path()).await?;
+            let graph = GraphStore::open(&graph.unwrap_or_else(config::graph_db_path))?;
+            let llm = LlmClient::from_env()?;
+
+            let opts = RecallOptions {
+                search_type,
+                top_k,
+                max_hops: hops,
+                system_prompt: None,
+            };
+            let out = recall::recall(&query, &opts, &embedder, &vectors, &graph, &llm).await?;
+
+            eprintln!(
+                "[{}] seeds={} nodes={} edges={} context={}ch",
+                out.search_type.as_str(),
+                out.seeds.len(),
+                out.reached_nodes,
+                out.reached_edges,
+                out.context_chars
+            );
+            println!("{}", out.answer);
         }
     }
     Ok(())

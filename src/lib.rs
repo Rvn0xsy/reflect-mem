@@ -3,5 +3,8 @@
 //! See `docs/design.md` for the full design.
 
 pub mod config;
+pub mod embed;
+pub mod llm;
 pub mod migrate;
+pub mod recall;
 pub mod storage;

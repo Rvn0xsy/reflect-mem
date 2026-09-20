@@ -109,7 +109,7 @@ pub fn import(input_dir: &Path, graph_path: &Path) -> Result<ImportReport> {
         std::fs::remove_file(graph_path)
             .with_context(|| format!("removing existing {}", graph_path.display()))?;
     }
-    let mut store = GraphStore::open(graph_path)?;
+    let store = GraphStore::open(graph_path)?;
     let n_nodes = store.insert_nodes(&nodes)?;
     let n_edges = store.insert_edges(&edges)?;
     let n_meta = store.insert_metadata(&metadata)?;

@@ -383,3 +383,26 @@ DATA_ROOT=~/.agents/cognee-memory
 - 图 schema：`Node(id, name, type, properties JSON, source_*, created_at, updated_at)` + `EDGE(from, to, relationship_name, ...)` + `GraphMetadata(key, value)`。
 - 节点类型（实测自图可视化）：`TextDocument`、`DocumentChunk`、`Entity`、`EntityType`、`NodeSet`、`TextSummary` 等。
 - embedding：`qwen3-embedding:0.6b` / 1024 维 / Ollama；LLM：MiniMax M2.7（OpenAI 兼容）。
+
+---
+
+## 13. 实施进度
+
+| 阶段 | 状态 | 说明 |
+|------|------|------|
+| 1. Spike（R1/R2） | ✅ | LanceDB crate 打开旧库；`LBUG+` 完整 dump |
+| 2. 迁移器 | ✅ | `migration/dump_graph.py` + `reflect-mem migrate`（含对账） |
+| 3. 存储层 | 🟡 | 图 ✅ / 向量 ✅ / 关系层待接 / 会话缓存待建 |
+| 4. recall | ✅ | `SUMMARIES` + `GRAPH_COMPLETION` 均已跑通（CLI） |
+| 5. remember | ⬜ | 会话快路径 + 永久 ETL |
+| 6. forget | ⬜ | 跨库删除 |
+| 7. MCP 层 | ⬜ | rmcp + stdio/streamable HTTP |
+| 8. 切换 | ⬜ | 迁移 → Rust 独占 → Python 退役 |
+
+已落地模块：`config` / `storage::graph` / `storage::vector` / `migrate` / `embed` / `llm` / `recall`。
+
+实测记录（2026-09-20）：
+
+- 图：6340 节点 / 18400 边迁移完成，多跳遍历正确。
+- 向量：7 张表原地可读可检索，1024 维一致。
+- recall：`SUMMARIES` 与 `GRAPH_COMPLETION` 端到端跑通；后者能答出前者漏掉的图内事实（如「不提交生成物」）。

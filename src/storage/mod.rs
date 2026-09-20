@@ -5,3 +5,4 @@
 //! - (later) vector layer over `cognee.lancedb`
 
 pub mod graph;
+pub mod vector;
