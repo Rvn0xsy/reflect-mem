@@ -1,0 +1,16 @@
+[package]
+name = "reflect-mem"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# arrow must match the version lancedb 0.37.1 links against (58.4.0), or the
+# RecordBatch / Array types we hand to lancedb won't unify with its own.
+arrow-array = "=58.4.0"
+arrow-schema = "=58.4.0"
+futures = "0.3.34"
+# Pinned to 0.37.1: 0.38.0 and 0.39.0 have an unconditional `pub mod job`
+# that references the `remote`-gated `Error::Http` variant, so they fail to
+# compile with default (no-remote) features. 0.37.1 is the newest that builds.
+lancedb = "=0.37.1"
+tokio = { version = "1.53.1", features = ["rt-multi-thread"] }
