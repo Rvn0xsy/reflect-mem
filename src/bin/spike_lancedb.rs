@@ -1,5 +1,5 @@
 //! Spike: verify the `lancedb` Rust crate can open, read, and vector-search the
-//! existing `cognee.lancedb` store written by the Python SDK.
+//! existing `reflect-mem.lancedb` store written by the Python SDK.
 //!
 //! Design-doc risk R2. If this passes, the vector layer is reused in place with
 //! zero migration: same files, same 1024-dim qwen3-embedding vectors.
@@ -16,7 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
         format!("{home}/.agents/reflect-mem")
     });
-    let db_path = PathBuf::from(&data_root).join("system/databases/cognee.lancedb");
+    let db_path = PathBuf::from(&data_root).join("system/databases/reflect-mem.lancedb");
     println!("Opening LanceDB at: {}", db_path.display());
 
     let db = lancedb::connect(db_path.to_str().unwrap())

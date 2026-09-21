@@ -1,4 +1,4 @@
-//! LanceDB vector layer — reads the existing `cognee.lancedb` in place.
+//! LanceDB vector layer — reads the existing `reflect-mem.lancedb` in place.
 //!
 //! Confirmed by risk R2 (`src/bin/spike_lancedb.rs`): the Rust crate opens the
 //! store written by the Python SDK. Every table has the same shape:
@@ -63,7 +63,7 @@ impl VectorStore {
         Self { db }
     }
 
-    /// Open the store at `path` (the `cognee.lancedb` directory).
+    /// Open the store at `path` (the `reflect-mem.lancedb` directory).
     pub async fn open(path: &Path) -> Result<Self> {
         let db = lancedb::connect(&path.to_string_lossy())
             .execute()

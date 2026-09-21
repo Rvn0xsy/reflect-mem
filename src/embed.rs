@@ -1,7 +1,7 @@
 //! Embedding client (Ollama HTTP).
 //!
 //! Must produce the *same* vectors as the Python pipeline, or the 520 MB of
-//! `cognee.lancedb` we reuse in place becomes unusable: model
+//! `reflect-mem.lancedb` we reuse in place becomes unusable: model
 //! `qwen3-embedding:0.6b`, 1024 dimensions. The dimension is asserted on every
 //! response — a silent mismatch would poison vector search.
 

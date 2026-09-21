@@ -67,8 +67,8 @@ fn bench_traverse(store: &GraphStore, seeds: &[String], hops: u32, reps: usize) 
 #[tokio::main]
 async fn main() -> Result<()> {
     let root = std::env::var("BENCH_ROOT").unwrap_or_else(|_| "/tmp/reflect-mem-bench".into());
-    let graph_path = PathBuf::from(&root).join("graph.sqlite");
-    let lancedb_path = PathBuf::from(&root).join("cognee.lancedb");
+    let graph_path = PathBuf::from(&root).join("reflect-mem.graph.sqlite");
+    let lancedb_path = PathBuf::from(&root).join("reflect-mem.lancedb");
 
     println!("== reflect-mem benchmark ==");
     println!("BENCH_ROOT={root}");

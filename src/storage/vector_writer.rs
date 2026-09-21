@@ -1,4 +1,4 @@
-//! Appending datapoint vectors to the existing `cognee.lancedb` tables.
+//! Appending datapoint vectors to the existing `reflect-mem.lancedb` tables.
 //!
 //! Table naming follows the `{type}_{index_field}` convention, and each row is
 //! `{id, vector, payload}` where `payload` is a fixed 22-field struct (the

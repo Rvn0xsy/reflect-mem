@@ -23,18 +23,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Import a dumped graph (migration/out/*.jsonl) into graph.sqlite.
+    /// Import a dumped graph (migration/out/*.jsonl) into reflect-mem.graph.sqlite.
     Migrate {
         /// Directory holding nodes.jsonl / edges.jsonl / metadata.jsonl.
         #[arg(long, default_value = "./migration/out")]
         input: PathBuf,
-        /// Target graph db. Defaults to <DATA_ROOT>/system/databases/graph.sqlite.
+        /// Target graph db. Defaults to <DATA_ROOT>/system/databases/reflect-mem.graph.sqlite.
         #[arg(long)]
         graph: Option<PathBuf>,
     },
     /// Show counts and histograms for the migrated graph.
     Inspect {
-        /// Graph db to inspect. Defaults to <DATA_ROOT>/system/databases/graph.sqlite.
+        /// Graph db to inspect. Defaults to <DATA_ROOT>/system/databases/reflect-mem.graph.sqlite.
         #[arg(long)]
         graph: Option<PathBuf>,
     },
@@ -45,7 +45,7 @@ enum Commands {
         /// How many hops to expand.
         #[arg(long, default_value_t = 2)]
         hops: u32,
-        /// Graph db. Defaults to <DATA_ROOT>/system/databases/graph.sqlite.
+        /// Graph db. Defaults to <DATA_ROOT>/system/databases/reflect-mem.graph.sqlite.
         #[arg(long)]
         graph: Option<PathBuf>,
     },
@@ -64,7 +64,7 @@ enum Commands {
         /// Graph expansion depth (GRAPH_COMPLETION only).
         #[arg(long, default_value_t = 2)]
         hops: u32,
-        /// Graph db. Defaults to <DATA_ROOT>/system/databases/graph.sqlite.
+        /// Graph db. Defaults to <DATA_ROOT>/system/databases/reflect-mem.graph.sqlite.
         #[arg(long)]
         graph: Option<PathBuf>,
     },

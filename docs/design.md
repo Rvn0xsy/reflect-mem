@@ -55,8 +55,8 @@
 │    forget:   跨库删除（SQLite + LanceDB + 图）                │
 │                                                             │
 │  存储层                                                     │
-│    ├─ 关系/元数据: SQLite (rusqlite)      → 复用 cognee_db    │
-│    ├─ 向量:        LanceDB (lancedb crate)→ 复用 cognee.lancedb│
+│    ├─ 关系/元数据: SQLite (rusqlite)      → 复用 reflect-mem.sqlite    │
+│    ├─ 向量:        LanceDB (lancedb crate)→ 复用 reflect-mem.lancedb│
 │    ├─ 图:          SQLite 属性图          → 迁移自 LBUG+       │
 │    ├─ 会话缓存:     SQLite (自建)          → reflect_session.db│
 │    └─ 源文本:       content-addressed 文件 → 复用 data/        │
@@ -80,22 +80,22 @@
 | 路径 | 格式 | 大小 | 角色 | 复用策略 |
 |------|------|------|------|----------|
 | `data/text_<md5>.txt`（127 个） | 纯文本 | ~几 MB | 源文档（**不可再生**） | ✅ 原地复用 |
-| `system/databases/cognee_db` | SQLite | 4.4 MB | 关系元数据（**不可再生**） | ✅ 原地复用（rusqlite 只读+写） |
+| `system/databases/reflect-mem.sqlite` | SQLite | 4.4 MB | 关系元数据（**不可再生**） | ✅ 原地复用（rusqlite 只读+写） |
 | `system/databases/cache.db` | SQLite | 576 KB | 旧会话缓存 | ⚠️ 不碰，自建新库 |
-| `system/databases/cognee.lancedb/` | LanceDB | 520 MB | embedding 向量（派生） | ✅ 原地复用（同 embedding 模型） |
+| `system/databases/reflect-mem.lancedb/` | LanceDB | 520 MB | embedding 向量（派生） | ✅ 原地复用（同 embedding 模型） |
 | `system/databases/cognee_graph_ladybug` | **LBUG+ 私有** | 84 MB | 知识图谱（派生） | 🔁 **唯一迁移项** |
 | `graph_*.html` | HTML | 33 MB | 可视化导出 | ❌ 忽略（可再生） |
 
 ### 4.2 复用 vs 迁移的边界
 
-**原地复用（字节不动）**：源文本、`cognee_db`（关系层）、`cognee.lancedb`（向量层）。
+**原地复用（字节不动）**：源文本、`reflect-mem.sqlite`（关系层）、`reflect-mem.lancedb`（向量层）。
 **唯一迁移**：`cognee_graph_ladybug` 的图数据，因为其魔数为 `LBUG+`（`4c 42 55 47 2b`），是 ladybug（Kuzu 的 C++ fork）的私有落盘格式，Rust 没有能打开它的库。
 
 向量层能原地复用的前提是 **embedding 模型不变**：`qwen3-embedding:0.6b`，1024 维，Ollama `http://host.docker.internal:11434/api/embed`。若换模型/维度，520 MB 向量全部作废，必须重算。
 
 ### 4.3 图存储：SQLite 属性图
 
-迁移目标是一个新的 SQLite 文件（`system/databases/graph.sqlite`），schema 与 ladybug 的 `Node`/`EDGE` 表 1:1 对齐，迁移就是直搬：
+迁移目标是一个新的 SQLite 文件（`system/databases/reflect-mem.graph.sqlite`），schema 与 ladybug 的 `Node`/`EDGE` 表 1:1 对齐，迁移就是直搬：
 
 ```sql
 CREATE TABLE graph_nodes (
@@ -150,7 +150,7 @@ SELECT DISTINCT n.* FROM graph_nodes n JOIN walk w ON n.id = w.id;
 
 ### 4.4 向量层：LanceDB（原地复用）
 
-`lancedb` crate 直接打开 `cognee.lancedb/`。现有表：
+`lancedb` crate 直接打开 `reflect-mem.lancedb/`。现有表：
 
 | Lance 表 | 对应内容 |
 |----------|----------|
@@ -175,7 +175,7 @@ SELECT DISTINCT n.* FROM graph_nodes n JOIN walk w ON n.id = w.id;
 
 ### 4.5 关系层：SQLite（原地复用）
 
-`rusqlite` 直接打开 `cognee_db`。关键表（实测 schema）：
+`rusqlite` 直接打开 `reflect-mem.sqlite`。关键表（实测 schema）：
 
 - `data`：数据条目（`id UUID PK`、`name`、`content_hash`、`dataset_id`、`node_set JSON`、`pipeline_status JSON`、`token_count`、时间戳、`importance_weight`…）
 - `datasets`：数据集（`id`、`name`、`owner_id`、`tenant_id`）
@@ -183,7 +183,7 @@ SELECT DISTINCT n.* FROM graph_nodes n JOIN walk w ON n.id = w.id;
 - `pipeline_runs`：流水线运行状态（cognify_status 的数据源）
 - 多租户相关表（`users`/`tenants`/`roles`/`acls`/`permissions`…）：单用户场景下**只读不写**，不实现多租户逻辑
 
-> 注意：`cognee_db.nodes/edges` 与图库里的 Node/EDGE 是两套（关系镜像 + 遍历图）。Rust 侧以 `graph.sqlite` 为遍历真源，`cognee_db.nodes/edges` 是否同步维护由实现阶段决定（见 §11 风险 R3）。
+> 注意：`reflect-mem.sqlite.nodes/edges` 与图库里的 Node/EDGE 是两套（关系镜像 + 遍历图）。Rust 侧以 `reflect-mem.graph.sqlite` 为遍历真源，`reflect-mem.sqlite.nodes/edges` 是否同步维护由实现阶段决定（见 §11 风险 R3）。
 
 ### 4.6 会话缓存：自建 SQLite
 
@@ -208,11 +208,11 @@ session_records(session_id, data_id, content, created_at, ...)
         │
         └─ 无 session_id ──► 永久记忆路径（ETL）：
                 1. 落盘源文本  data/text_<md5>.txt
-                2. 写关系层   cognee_db.data / datasets / nodes / edges
+                2. 写关系层   reflect-mem.sqlite.data / datasets / nodes / edges
                 3. chunk     文本切分（语义兼容，不追求与 Python 逐字节一致）
                 4. 抽取      MiniMax（OpenAI 兼容 + JSON mode）产出实体/关系
-                5. 写图      graph.sqlite 的 graph_nodes / graph_edges
-                6. 写向量    Ollama embedding → cognee.lancedb 对应表
+                5. 写图      reflect-mem.graph.sqlite 的 graph_nodes / graph_edges
+                6. 写向量    Ollama embedding → reflect-mem.lancedb 对应表
                 7. (可选 background=True) 后台执行，cognify_status 可查
 ```
 
@@ -234,7 +234,7 @@ session_records(session_id, data_id, content, created_at, ...)
              ├─ SUMMARIES ──► LanceDB TextSummary_text 向量检索 ──► 返回摘要
              └─ GRAPH_COMPLETION ──►
                   1. LanceDB 向量检索命中实体种子
-                  2. graph.sqlite 递归 CTE 做 1~N 跳邻居扩展
+                  2. reflect-mem.graph.sqlite 递归 CTE 做 1~N 跳邻居扩展
                   3. 取回子图 + 关联文本块
                   4. MiniMax 综合生成答案
 ```
@@ -247,7 +247,7 @@ session_records(session_id, data_id, content, created_at, ...)
 
 `forget(dataset, everything, data_id, dataset_id)`：
 
-- 跨三层删除：关系层（`cognee_db`）、向量层（`cognee.lancedb`）、图（`graph.sqlite`）。
+- 跨三层删除：关系层（`reflect-mem.sqlite`）、向量层（`reflect-mem.lancedb`）、图（`reflect-mem.graph.sqlite`）。
 - 与 Python 版语义对齐：按数据集、按 data_id、或 everything。
 - 删除是**不可逆**的，工具描述里写明，且仅由用户显式触发。
 
@@ -305,27 +305,27 @@ dataset_id: Option<String>,
 
 ## 9. 迁移方案
 
-唯一迁移项是图（`LBUG+` → `graph.sqlite`）。采用 dump 方式：
+唯一迁移项是图（`LBUG+` → `reflect-mem.graph.sqlite`）。采用 dump 方式：
 
 1. **一次性 Python 脚本**（迁移工具，跑完即弃，不进交付物）：
    - 用 `ladybug` 包打开 `cognee_graph_ladybug`。
    - 遍历 `Node` / `EDGE` / `GraphMetadata`，dump 成 JSONL（`nodes.jsonl` / `edges.jsonl`）。
 2. **Rust 导入器**（`reflect-mem migrate` 子命令）：
-   - 读 JSONL，批量 INSERT 进 `graph.sqlite`（事务 + prepared statement）。
+   - 读 JSONL，批量 INSERT 进 `reflect-mem.graph.sqlite`（事务 + prepared statement）。
 3. **校验**：节点/边计数对账，抽样比对 `type` / `relationship_name` 分布。
 4. 迁移完成后：`cognee_graph_ladybug` 归档不删（保底回滚），Python venv 可卸载。
 
 > 为什么 dump 而不是 re-cognify：re-cognify 要拿 127 个源文本在 Rust 里重跑全部 LLM 抽取，重复花 MiniMax 的钱；dump 是纯数据搬运，免费且快。用户已确认「彻底摆脱 Python」指交付物，迁移工具可用一次性 Python。
 
-**其余数据不迁移**：源文本、`cognee_db`、`cognee.lancedb` 原地打开。
+**其余数据不迁移**：源文本、`reflect-mem.sqlite`、`reflect-mem.lancedb` 原地打开。
 
 ### 9.1 已实测（2026-09-20）
 
 - dump：`migration/dump_graph.py` 在副本上跑通，导出 **6340 节点 / 18400 边 / 2 metadata**（storage version 43）到 `nodes.jsonl`（14MB）/ `edges.jsonl`（20MB）。
-- import：`reflect-mem migrate` 导入并**按 `summary.json` 对账通过** → `graph.sqlite`（35MB）。
+- import：`reflect-mem migrate` 导入并**按 `summary.json` 对账通过** → `reflect-mem.graph.sqlite`（35MB）。
 - 验证：`reflect-mem inspect` 直方图与源图一致；`reflect-mem traverse <id> --hops 2` 从「开发习惯（通用版）」到达 27 个节点 + 34 条边，多跳上下文完整。
 
-导入端会移除旧 `graph.sqlite` 后全量重建，并对账「dumper 计数 vs 导入计数 vs 库内计数」，任一不一致即报错退出。
+导入端会移除旧 `reflect-mem.graph.sqlite` 后全量重建，并对账「dumper 计数 vs 导入计数 vs 库内计数」，任一不一致即报错退出。
 
 ---
 
@@ -360,7 +360,7 @@ DATA_ROOT=~/.agents/reflect-mem
 
 - **R1 — 迁移完整性**：✅ **已验证**（2026-09-20）。节点/边/JSON properties/`source_*` 溯源字段完整导出并导入，计数对账通过。见 §9.1。
 - **R2 — LanceDB crate 与 Python 版格式兼容**：✅ **已验证**（2026-09-20）。`lancedb =0.37.1` 可打开、读向量、做最近邻检索，top-1 命中自身。见 §4.4。
-- **R3 — 图的关系镜像**：`cognee_db.nodes/edges` 与图库的冗余关系需要理清。若 GRAPH_COMPLETION 不依赖镜像表，Rust 侧可只维护 `graph.sqlite`，避免双写。
+- **R3 — 图的关系镜像**：`reflect-mem.sqlite.nodes/edges` 与图库的冗余关系需要理清。若 GRAPH_COMPLETION 不依赖镜像表，Rust 侧可只维护 `reflect-mem.graph.sqlite`，避免双写。
 - **R4 — 抽取质量**：语义兼容（非字节对齐）意味着新旧抽取结果细节不同。需用同 LLM + 相近 prompt 保证实体/关系质量不退化，必要时做小样本 A/B 对比。
 - **R5 — 后台任务生命周期**：`background=True` 的 ingestion 需要 pin 住任务（对应 Python 版 `_track_background`），错误进有界环形缓冲，供 `cognify_status` 查询。
 
@@ -369,7 +369,7 @@ DATA_ROOT=~/.agents/reflect-mem
 ## 12. 实施阶段（建议顺序）
 
 1. **Spike（先验证两个不确定性）**
-   - `lancedb` crate 能否打开/检索现有 `cognee.lancedb`（R2）。
+   - `lancedb` crate 能否打开/检索现有 `reflect-mem.lancedb`（R2）。
    - 迁移脚本能否完整 dump `LBUG+`（R1）。
 2. **迁移器**：Python dump 脚本 + `reflect-mem migrate` 导入 + 对账。
 3. **存储层**：rusqlite（关系 + 图 + 会话）、lancedb（向量）封装。
@@ -419,7 +419,7 @@ DATA_ROOT=~/.agents/reflect-mem
 - `tools/list` 返回 `recall` 工具。
 - `tools/call recall {search_type: GRAPH_COMPLETION}` 返回正确的多跳答案。
 
-`graph.sqlite` 已迁移到正式位置：`~/.agents/reflect-mem/system/databases/graph.sqlite`（新增文件，不触碰原有任何文件）。
+`reflect-mem.graph.sqlite` 已迁移到正式位置：`~/.agents/reflect-mem/system/databases/reflect-mem.graph.sqlite`（新增文件，不触碰原有任何文件）。
 
 ### 13.2 写路径规格（已从原实现源码 + 真实数据双重验证）
 

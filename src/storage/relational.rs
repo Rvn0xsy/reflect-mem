@@ -1,4 +1,4 @@
-//! Relational metadata (`cognee_db`, SQLite) — read + minimal writes.
+//! Relational metadata (`reflect-mem.sqlite`, SQLite) — read + minimal writes.
 //!
 //! Reused in place. Writes cover only what ingestion needs (datasets, data,
 //! pipeline status); tenants/ACLs stay read-only in single-user mode.
@@ -66,7 +66,7 @@ impl RelationalStore {
             |r| r.get::<_, String>(0),
         )
         .optional()?
-        .context("default user row missing from cognee_db; run the Python setup once")
+        .context("default user row missing from reflect-mem.sqlite; run the Python setup once")
     }
 
     /// Existing dataset id (dashless hex, as the legacy store keeps it) or create one.

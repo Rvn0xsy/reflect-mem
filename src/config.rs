@@ -1,9 +1,9 @@
 //! Data-root layout.
 //!
 //! By design (`docs/design.md` §4.2) we reuse the existing data root in place:
-//! source text, `cognee_db` (relational) and `cognee.lancedb` (vectors) are
-//! read where they already are. Only the graph is migrated, into a new
-//! `graph.sqlite` that sits beside them.
+//! source text, `reflect-mem.sqlite` (relational) and `reflect-mem.lancedb`
+//! (vectors) are read where they already are. Only the graph is migrated, into
+//! `reflect-mem.graph.sqlite` beside them.
 
 use std::path::PathBuf;
 
@@ -25,17 +25,17 @@ pub fn databases_dir() -> PathBuf {
 
 /// Migrated property graph (new; written by `reflect-mem migrate`).
 pub fn graph_db_path() -> PathBuf {
-    databases_dir().join("graph.sqlite")
+    databases_dir().join("reflect-mem.graph.sqlite")
 }
 
-/// Existing relational metadata (SQLite, reused in place).
+/// Relational metadata (SQLite).
 pub fn relational_db_path() -> PathBuf {
-    databases_dir().join("cognee_db")
+    databases_dir().join("reflect-mem.sqlite")
 }
 
-/// Existing vector store (LanceDB, reused in place).
+/// Vector store (LanceDB).
 pub fn lancedb_path() -> PathBuf {
-    databases_dir().join("cognee.lancedb")
+    databases_dir().join("reflect-mem.lancedb")
 }
 
 /// Existing content-addressed source text directory.
@@ -43,7 +43,7 @@ pub fn text_dir() -> PathBuf {
     data_root().join("data")
 }
 
-/// Session cache (new; we do not touch the legacy `cache.db`).
+/// Session cache.
 pub fn session_db_path() -> PathBuf {
-    databases_dir().join("reflect_session.db")
+    databases_dir().join("reflect-mem.session.sqlite")
 }

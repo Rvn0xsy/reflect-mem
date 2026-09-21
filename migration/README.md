@@ -1,12 +1,12 @@
 # migration — 一次性图迁移
 
-把旧记忆服务的 `LBUG+` 图导出成 JSONL，供 `reflect-mem migrate` 导入 `graph.sqlite`。
+把旧记忆服务的 `LBUG+` 图导出成 JSONL，供 `reflect-mem migrate` 导入 `reflect-mem.graph.sqlite`。
 
 **这是一次性工具**，跑完即可连同 Python 环境一起删除，不进交付物。
 
 ## 为什么需要它
 
-图库 `cognee_graph_ladybug` 的魔数是 `LBUG+`，是 `ladybug`（Kuzu 的 C++ fork）的私有格式，Rust 无法读取。其余数据层（源文本 / `cognee_db` / `cognee.lancedb`）都能原地复用，只有这一层要搬。
+图库 `cognee_graph_ladybug` 的魔数是 `LBUG+`，是 `ladybug`（Kuzu 的 C++ fork）的私有格式，Rust 无法读取。其余数据层（源文本 / `reflect-mem.sqlite` / `reflect-mem.lancedb`）都能原地复用，只有这一层要搬。
 
 ## 用法
 
@@ -40,7 +40,7 @@ python dump_graph.py --out ./out
 导入：
 
 ```bash
-reflect-mem migrate --input migration/out --graph ~/.agents/reflect-mem/system/databases/graph.sqlite
+reflect-mem migrate --input migration/out --graph ~/.agents/reflect-mem/system/databases/reflect-mem.graph.sqlite
 ```
 
 导入按 `summary.json` 对账节点/边计数，不一致即报错。

@@ -17,8 +17,8 @@
 the Model Context Protocol so an AI agent can store and retrieve facts that survive across conversations — **without
 a Python runtime, a venv, or a Kuzu C++ dependency**.
 
-It drops in on top of an existing memory store: source text, the `cognee_db` relational layer and
-the 520 MB `cognee.lancedb` vector store are all opened **in place**, byte-for-byte. Only the private
+It drops in on top of an existing memory store: source text, the `reflect-mem.sqlite` relational layer and
+the 520 MB `reflect-mem.lancedb` vector store are all opened **in place**, byte-for-byte. Only the private
 `LBUG+` graph is migrated, into a SQLite property graph.
 
 ---
@@ -27,7 +27,7 @@ the 520 MB `cognee.lancedb` vector store are all opened **in place**, byte-for-b
 
 - **Single static binary.** No Python, no system OpenSSL (`rustls`), no Kuzu linkage. Every storage
   engine is either Rust-native or bundled SQLite.
-- **In-place data reuse.** Opens `data/text_*.txt`, `cognee_db`, and `cognee.lancedb` byte-for-byte in
+- **In-place data reuse.** Opens `data/text_*.txt`, `reflect-mem.sqlite`, and `reflect-mem.lancedb` byte-for-byte in
   place — the embedding model is unchanged (`qwen3-embedding:0.6b`, 1024-dim), so existing vectors stay
   valid.
 - **Sub-millisecond graph traversal.** `GRAPH_COMPLETION`'s K-hop expansion runs as a SQLite recursive
@@ -97,7 +97,7 @@ export DATA_ROOT=~/.agents/reflect-mem
 ```
 
 > `EMBEDDING_MODEL` **must** match the model that produced the existing vectors, or the reused
-> `cognee.lancedb` becomes unusable.
+> `reflect-mem.lancedb` becomes unusable.
 
 ### 3. Serve over MCP
 
@@ -135,7 +135,7 @@ reflect-mem forget --dataset main_dataset
 
 | Command | Description |
 |---------|-------------|
-| `migrate --input <dir>` | Import a graph dump (`nodes.jsonl` / `edges.jsonl`) into `graph.sqlite` |
+| `migrate --input <dir>` | Import a graph dump (`nodes.jsonl` / `edges.jsonl`) into `reflect-mem.graph.sqlite` |
 | `inspect` | Node/edge counts and type histograms |
 | `traverse <id> --hops N` | Print the K-hop neighbourhood of a node |
 | `vectors` | List reused LanceDB tables and row counts |
@@ -205,8 +205,8 @@ The dominant cost is LLM generation; local storage + graph + vectors together st
 
 ```bash
 # 1. isolate a copy of the data (never touch the live store)
-cp -R ~/.agents/reflect-mem/system/databases/graph.sqlite /tmp/reflect-mem-bench/
-cp -R ~/.agents/reflect-mem/system/databases/cognee.lancedb /tmp/reflect-mem-bench/
+cp -R ~/.agents/reflect-mem/system/databases/reflect-mem.graph.sqlite /tmp/reflect-mem-bench/
+cp -R ~/.agents/reflect-mem/system/databases/reflect-mem.lancedb /tmp/reflect-mem-bench/
 
 # 2. run the local hot-path harness (graph + embedding + vector search)
 BENCH_ROOT=/tmp/reflect-mem-bench cargo run --release --bin bench
