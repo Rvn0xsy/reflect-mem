@@ -11,6 +11,8 @@
 [![LanceDB](https://img.shields.io/badge/LanceDB-vectors-8A2BE2)]()
 [![version 0.1.0](https://img.shields.io/badge/version-0.1.0-lightgrey)]()
 
+**English** · [简体中文](README-zh.md)
+
 </div>
 
 `reflect-mem` is a long-term memory MCP server written in Rust. It exposes `remember` / `recall` / `forget` over
@@ -52,7 +54,7 @@ the 520 MB `reflect-mem.lancedb` vector store are all opened **in place**, byte-
 │                     reflect-mem (Rust)                       │
 │                                                              │
 │   MCP layer (rmcp)  ·  remember / recall / forget            │
-│   transports: stdio                                            │
+│   transports: stdio · streamable HTTP + bearer token          │
 │  ─────────────────────────────────────────────────────────── │
 │   recall     SUMMARIES ──────────► LanceDB vector search      │
 │              GRAPH_COMPLETION ──► vectors → SQLite K-hop CTE │
