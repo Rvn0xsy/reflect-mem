@@ -1,6 +1,6 @@
 //! DataPoint construction — the schema-fidelity core of the write path.
 //!
-//! Everything here mirrors what cognee's pipeline produces, field by field and
+//! Everything here mirrors what the legacy pipeline produces, field by field and
 //! in the same JSON key order, so data written by reflect-mem is
 //! indistinguishable from data written by the Python pipeline (design decision
 //! D12: semantically compatible; ids byte-compatible per §13.2).
@@ -14,10 +14,10 @@ use super::ids;
 #[derive(Debug, Clone)]
 pub struct Datapoint {
     pub id: Uuid,
-    /// Graph `name` column (absent from `properties`, like cognee).
+    /// Graph `name` column (absent from `properties`, like the legacy pipeline).
     pub name: Option<String>,
     pub type_: String,
-    /// Full property map, key order matching cognee.
+    /// Full property map, key order matching the legacy pipeline.
     pub properties: Map<String, Value>,
     /// `metadata.index_fields` — which properties were embedded.
     pub index_fields: Vec<String>,
@@ -25,7 +25,7 @@ pub struct Datapoint {
     pub embeddable_text: String,
 }
 
-/// One graph edge with cognee's canonical property set.
+/// One graph edge with the canonical property set.
 #[derive(Debug, Clone)]
 pub struct Edge {
     pub from_id: String,
@@ -46,9 +46,9 @@ fn provenance_list(values: &[String]) -> String {
     format!("|{}|", values.join("|"))
 }
 
-/// Assemble one datapoint: base fields in cognee's order, then type extras.
+/// Assemble one datapoint: base fields in the original order, then type extras.
 ///
-/// `embeddable` is the text cognee would embed (the joined `index_fields`
+/// `embeddable` is the text the legacy pipeline embeds (the joined `index_fields`
 /// values of the pydantic model — note `name` lives on the model, not in the
 /// property map, so it cannot be derived from `extras`).
 #[allow(clippy::too_many_arguments)]
@@ -138,7 +138,7 @@ pub fn to_graph_node(
     }
 }
 
-/// Edge property map, matching `_create_edge_properties` (cognee merges the
+/// Edge property map, matching `_create_edge_properties` (the legacy pipeline merges the
 /// `Edge` model dump after the base keys, hence `extra`).
 pub fn edge_properties(
     from_id: &str,
@@ -167,7 +167,7 @@ pub fn edge_properties(
     p
 }
 
-/// `%Y-%m-%d %H:%M:%S` UTC, the exact format cognee stamps on edges.
+/// `%Y-%m-%d %H:%M:%S` UTC, the exact format the legacy pipeline stamps on edges.
 pub fn chrono_fmt_now() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -208,7 +208,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// Base property keys, in cognee's pydantic declaration order (verified
+    /// Base property keys, in the original pydantic declaration order (verified
     /// against the real store). `id` and `name` are separate columns.
     const BASE_KEYS: &[&str] = &[
         "created_at",
@@ -230,7 +230,7 @@ mod tests {
     ];
 
     #[test]
-    fn timestamp_format_matches_cognee() {
+    fn timestamp_format_matches_legacy() {
         // 2026-08-24 06:38:55 UTC = 1787553535
         assert_eq!(format_utc_secs(1_787_553_535), "2026-08-24 06:38:55");
     }

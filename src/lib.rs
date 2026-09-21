@@ -1,4 +1,4 @@
-//! reflect-mem — a Rust reimplementation of cognee's memory-management MCP.
+//! reflect-mem — a long-term memory-management MCP server in Rust.
 //!
 //! See `docs/design.md` for the full design.
 

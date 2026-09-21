@@ -1,6 +1,6 @@
 # reflect-mem 设计文档
 
-> 目标：用 Rust 重写 cognee 的记忆管理 MCP 服务，产出**单一静态二进制**，彻底移除 Python 运行时，复用现有记忆数据，迁移成本最小化。
+> 目标：用 Rust 重写旧的 Python 记忆管理 MCP 服务，产出**单一静态二进制**，彻底移除 Python 运行时，复用现有记忆数据，迁移成本最小化。
 
 ---
 
@@ -8,13 +8,13 @@
 
 - 决策来源：设计 grilling 会话 + 用户逐条确认。
 - 状态：已达成共享理解，frontier 清空。
-- 范围：本文件描述**记忆管理 MCP**（`remember` / `recall` / `forget`），不覆盖 cognee 的完整流水线（`cognify` 全部搜索类型、`improve`、自定义图模型、多租户隔离等）。
+- 范围：本文件描述**记忆管理 MCP**（`remember` / `recall` / `forget`），不覆盖旧服务的完整流水线（`cognify` 全部搜索类型、`improve`、自定义图模型、多租户隔离等）。
 
 ---
 
 ## 1. 背景
 
-现状：Python 的 `cognee-mcp` 通过 FastMCP 暴露 MCP 工具，底层是 Python `cognee` 库（LLM 实体抽取、chunking、Kuzu 图库、LanceDB 向量库）。它有三个连接模式（direct / API / cloud），三个 transport（stdio / SSE / streamable HTTP）。
+现状：旧的 Python 记忆服务通过 FastMCP 暴露 MCP 工具，底层是 Python 库（LLM 实体抽取、chunking、Kuzu 图库、LanceDB 向量库）。它有三个连接模式（direct / API / cloud），三个 transport（stdio / SSE / streamable HTTP）。
 
 问题：部署需要 Python 环境 + venv，冷启动慢，二进制体积大，且记忆引擎与 MCP 协议层耦合在一个 Python 进程里。
 
@@ -75,7 +75,7 @@
 
 ### 4.1 现状数据清单（实测）
 
-数据根目录：`~/.agents/reflect-mem/`（可配置；2026-09-20 由 `~/.agents/cognee-memory/` 改名而来）
+数据根目录：`~/.agents/reflect-mem/`（可配置；2026-09-20 由旧数据目录改名而来）
 
 | 路径 | 格式 | 大小 | 角色 | 复用策略 |
 |------|------|------|------|----------|
@@ -216,7 +216,7 @@ session_records(session_id, data_id, content, created_at, ...)
                 7. (可选 background=True) 后台执行，cognify_status 可查
 ```
 
-抽取的 JSON schema 对齐 cognee 的 KnowledgeGraph 数据模型（实体、关系类型），但**语义兼容**即可，不逐字节复刻 Python 的 prompt/切分边界。
+抽取的 JSON schema 对齐旧服务的 KnowledgeGraph 数据模型（实体、关系类型），但**语义兼容**即可，不逐字节复刻 Python 的 prompt/切分边界。
 
 ---
 
@@ -405,7 +405,7 @@ DATA_ROOT=~/.agents/reflect-mem
 
 已落地模块：`config` / `storage::graph` / `storage::vector` / `migrate` / `embed` / `llm` / `recall` / `mcp`。
 
-**注意**：MCP 目前只暴露 `recall`（读路径）。`remember`/`forget`（写路径）**刻意未实现**——写必须逐字匹配 cognee 的图/向量 schema，仓促实现会污染真实的 651MB 记忆库。
+**注意**：MCP 目前只暴露 `recall`（读路径）。`remember`/`forget`（写路径）**刻意未实现**——写必须逐字匹配旧服务的图/向量 schema，仓促实现会污染真实的 651MB 记忆库。
 
 实测记录（2026-09-20）：
 
@@ -419,9 +419,9 @@ DATA_ROOT=~/.agents/reflect-mem
 - `tools/list` 返回 `recall` 工具。
 - `tools/call recall {search_type: GRAPH_COMPLETION}` 返回正确的多跳答案。
 
-`graph.sqlite` 已迁移到正式位置：`~/.agents/reflect-mem/system/databases/graph.sqlite`（新增文件，不触碰 cognee 原有任何文件）。
+`graph.sqlite` 已迁移到正式位置：`~/.agents/reflect-mem/system/databases/graph.sqlite`（新增文件，不触碰原有任何文件）。
 
-### 13.2 写路径规格（已从 cognee 源码 + 真实数据双重验证）
+### 13.2 写路径规格（已从原实现源码 + 真实数据双重验证）
 
 **确定性 ID**（`norm = lowercase + 空格→_ + 去撇号`，NAMESPACE_OID）：
 

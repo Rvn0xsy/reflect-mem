@@ -2,7 +2,7 @@
 
 # reflect-mem
 
-**Long-term memory for AI agents — a single Rust binary that reimplements cognee's memory MCP.**
+**Long-term memory for AI agents — a single Rust binary that serves `remember` / `recall` / `forget` over MCP.**
 
 [![Rust 1.96](https://img.shields.io/badge/rust-1.96-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![edition 2024](https://img.shields.io/badge/edition-2024-orange)]()
@@ -13,12 +13,11 @@
 
 </div>
 
-`reflect-mem` is a Rust reimplementation of [cognee](https://www.cognee.ai)'s memory-management MCP
-server. It exposes `remember` / `recall` / `forget` over the Model Context Protocol so an AI agent can
-store and retrieve facts that survive across conversations — **without a Python runtime, a venv, or a
-Kuzu C++ dependency**.
+`reflect-mem` is a long-term memory MCP server written in Rust. It exposes `remember` / `recall` / `forget` over
+the Model Context Protocol so an AI agent can store and retrieve facts that survive across conversations — **without
+a Python runtime, a venv, or a Kuzu C++ dependency**.
 
-It drops in on top of an existing cognee memory store: source text, the `cognee_db` relational layer and
+It drops in on top of an existing memory store: source text, the `cognee_db` relational layer and
 the 520 MB `cognee.lancedb` vector store are all opened **in place**, byte-for-byte. Only the private
 `LBUG+` graph is migrated, into a SQLite property graph.
 
@@ -28,9 +27,9 @@ the 520 MB `cognee.lancedb` vector store are all opened **in place**, byte-for-b
 
 - **Single static binary.** No Python, no system OpenSSL (`rustls`), no Kuzu linkage. Every storage
   engine is either Rust-native or bundled SQLite.
-- **In-place data reuse.** Reuses `data/text_*.txt`, `cognee_db`, and `cognee.lancedb` exactly as cognee
-  left them — the embedding model is unchanged (`qwen3-embedding:0.6b`, 1024-dim), so existing vectors
-  stay valid.
+- **In-place data reuse.** Opens `data/text_*.txt`, `cognee_db`, and `cognee.lancedb` byte-for-byte in
+  place — the embedding model is unchanged (`qwen3-embedding:0.6b`, 1024-dim), so existing vectors stay
+  valid.
 - **Sub-millisecond graph traversal.** `GRAPH_COMPLETION`'s K-hop expansion runs as a SQLite recursive
   CTE over ~6.3k nodes / ~18.5k edges and returns in **tens of microseconds** (see [Benchmark](#benchmark)).
 - **Two retrieval modes.** `SUMMARIES` (fast vector search over hierarchical summaries) and
@@ -244,6 +243,14 @@ docs/           design
 migration/      one-shot graph migration tooling
 skills/         operator skill for the AI agent
 ```
+
+## Acknowledgements
+
+The store layout, graph schema, and ingestion pipeline are informed by
+[cognee](https://www.cognee.ai), the reference implementation this project reimplements in Rust.
+cognee is licensed under the [Apache License 2.0](https://github.com/topoteretes/cognee/blob/main/LICENSE)
+(Copyright 2024 Topoteretes UG). `reflect-mem` is an independent implementation and does not bundle
+cognee source code. See [NOTICE](NOTICE).
 
 ## License
 

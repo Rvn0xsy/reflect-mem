@@ -1,6 +1,6 @@
 //! Appending datapoint vectors to the existing `cognee.lancedb` tables.
 //!
-//! Table naming is cognee's `{type}_{index_field}` convention, and each row is
+//! Table naming follows the `{type}_{index_field}` convention, and each row is
 //! `{id, vector, payload}` where `payload` is a fixed 22-field struct (the
 //! union of DataPoint fields, verified against the live store). Existing tables
 //! keep their on-disk schema; new rows are built against whatever the table
@@ -222,7 +222,7 @@ pub async fn append_rows(
     Ok(rows.len())
 }
 
-/// Writes datapoint embeddings, grouped per cognee table.
+/// Writes datapoint embeddings, grouped per table.
 pub struct VectorWriter {
     db: lancedb::Connection,
 }

@@ -1,4 +1,4 @@
-//! LLM extraction and summarization, using cognee's own prompts and response
+//! LLM extraction and summarization, using the original prompts and response
 //! schemas (see `docs/design.md` §13.2).
 
 use anyhow::{Context, Result, bail};
@@ -6,8 +6,8 @@ use serde::Deserialize;
 
 use crate::llm::LlmClient;
 
-/// cognee's default extraction system prompt
-/// (`cognee/infrastructure/llm/prompts/generate_graph_prompt.txt`).
+/// The extraction system prompt
+/// (the original `generate_graph_prompt.txt`).
 const EXTRACT_SYSTEM: &str = r#"You are a top-tier algorithm designed for extracting information in structured formats to build a knowledge graph.
 **Nodes** represent entities and concepts. They're akin to Wikipedia nodes.
 **Edges** represent relationships between concepts. They're akin to Wikipedia links.
@@ -46,7 +46,7 @@ Adhere to the rules strictly. Non-compliance will result in termination.
 Respond with ONLY a JSON object of this exact shape, no markdown fences:
 {"nodes": [{"id": "entity name", "name": "entity name", "type": "EntityType", "description": "..."}], "edges": [{"source_node_id": "entity name", "target_node_id": "entity name", "relationship_name": "snake_case_name", "description": "one-sentence fact"}]}"#;
 
-/// cognee's `summarize_content.txt`.
+/// the original `summarize_content.txt`.
 const SUMMARIZE_SYSTEM: &str = r#"Summarize the chunk for retrieval.
 
 Output two sections only.
@@ -80,7 +80,7 @@ Max 200 tokens.
 Respond with ONLY a JSON object of this exact shape, no markdown fences:
 {"summary": "the summary text"}"#;
 
-/// The `KnowledgeGraph` response schema (`cognee.shared.data_models`).
+/// The `KnowledgeGraph` response schema (the original data models).
 #[derive(Debug, Clone, Deserialize)]
 pub struct ExtractedNode {
     #[serde(default)]

@@ -1,0 +1,19 @@
+reflect-mem
+===========
+
+This product includes a Rust reimplementation informed by cognee
+(https://www.cognee.ai), which is licensed under the Apache License,
+Version 2.0:
+
+    Copyright 2024 Topoteretes UG
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+`reflect-mem` does not bundle cognee source code; it reimplements the
+memory-store layout, graph schema, and ingestion pipeline.
+
+See the "Acknowledgements" section of README.md for details.

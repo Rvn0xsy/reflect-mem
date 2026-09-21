@@ -1,12 +1,9 @@
 //! Data-root layout.
 //!
-//! By design (`docs/design.md` §4.2) we reuse the existing cognee data root in
-//! place: source text, `cognee_db` (relational) and `cognee.lancedb` (vectors)
-//! are read where they already are. Only the graph is migrated, into a new
+//! By design (`docs/design.md` §4.2) we reuse the existing data root in place:
+//! source text, `cognee_db` (relational) and `cognee.lancedb` (vectors) are
+//! read where they already are. Only the graph is migrated, into a new
 //! `graph.sqlite` that sits beside them.
-//!
-//! The root was renamed from `~/.agents/cognee-memory` to `~/.agents/reflect-mem`
-//! on 2026-09-20; the default below tracks the new location.
 
 use std::path::PathBuf;
 

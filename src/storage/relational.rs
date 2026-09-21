@@ -18,7 +18,7 @@ pub struct RelationalStore {
     conn: Mutex<Connection>,
 }
 
-/// Columns for the `data` table, matching what cognee writes for a plain
+/// Columns for the `data` table, matching what the legacy pipeline writes for a plain
 /// text ingestion (verified against live rows).
 pub struct DataInsert<'a> {
     pub id: Uuid,
@@ -50,7 +50,7 @@ impl RelationalStore {
         self.conn.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// The single-user owner id (cognee's bootstrap user).
+    /// The single-user owner id (the bootstrap user).
     pub fn default_user_id(&self) -> Result<String> {
         let conn = self.conn();
         Self::default_user_id_conn(&conn)
@@ -69,7 +69,7 @@ impl RelationalStore {
         .context("default user row missing from cognee_db; run the Python setup once")
     }
 
-    /// Existing dataset id (dashless hex, as cognee stores it) or create one.
+    /// Existing dataset id (dashless hex, as the legacy store keeps it) or create one.
     ///
     /// Takes the connection lock exactly once for the whole read-or-insert;
     /// every inner step uses the held guard, never `self.conn()` again.
@@ -212,7 +212,7 @@ impl RelationalStore {
             }
             _ => Value::Object(Default::default()),
         };
-        // add_pipeline + cognify_pipeline both completed; cognee keys runs by
+        // add_pipeline + cognify_pipeline both completed; the legacy pipeline keys runs by
         // a per-pipeline run id but a single run id keeps the shape valid.
         for pipeline in ["add_pipeline", "cognify_pipeline"] {
             let obj = value
@@ -247,7 +247,7 @@ fn json_pipeline_status(run_key: &str, state: &str) -> String {
     .to_string()
 }
 
-/// cognee stores most relational ids as dashless hex.
+/// the legacy store keeps most relational ids as dashless hex.
 fn dashless(id: Uuid) -> String {
     id.simple().to_string()
 }

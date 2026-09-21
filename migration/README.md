@@ -1,6 +1,6 @@
 # migration — 一次性图迁移
 
-把 cognee 的 `LBUG+` 图导出成 JSONL，供 `reflect-mem migrate` 导入 `graph.sqlite`。
+把旧记忆服务的 `LBUG+` 图导出成 JSONL，供 `reflect-mem migrate` 导入 `graph.sqlite`。
 
 **这是一次性工具**，跑完即可连同 Python 环境一起删除，不进交付物。
 
@@ -13,7 +13,7 @@
 ```bash
 cd migration
 python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt          # ladybug==0.19.0，与 cognee 钉的版本一致
+pip install -r requirements.txt          # ladybug==0.19.0，与原实现钉的版本一致
 python dump_graph.py --out ./out
 ```
 

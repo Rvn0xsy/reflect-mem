@@ -1,4 +1,4 @@
-//! Import a dumped cognee graph (`migration/out/*.jsonl`) into `graph.sqlite`.
+//! Import a dumped graph (`migration/out/*.jsonl`) into `graph.sqlite`.
 //!
 //! Companion to `migration/dump_graph.py`. See `docs/design.md` §9.
 

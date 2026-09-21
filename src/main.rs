@@ -14,7 +14,7 @@ use uuid::Uuid;
 #[command(
     name = "reflect-mem",
     version,
-    about = "Rust memory-management MCP for cognee-shaped memory"
+    about = "Rust long-term memory-management MCP server"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -23,7 +23,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Import a dumped cognee graph (migration/out/*.jsonl) into graph.sqlite.
+    /// Import a dumped graph (migration/out/*.jsonl) into graph.sqlite.
     Migrate {
         /// Directory holding nodes.jsonl / edges.jsonl / metadata.jsonl.
         #[arg(long, default_value = "./migration/out")]

@@ -1,19 +1,19 @@
 //! Deterministic identity for graph entities — byte-for-byte compatible with
-//! cognee's `DataPoint.id_for` / `generate_edge_object_id`.
+//! the legacy `DataPoint.id_for` / `generate_edge_object_id`.
 //!
 //! Verified against the real store: recomputing these ids for existing nodes
 //! ("开发习惯（通用版）" → `4bd4116f-…`, EntityType "concept" → `d2a381fa-…`)
-//! reproduces the ids cognee wrote. This is what makes re-ingesting the same
+//! reproduces the ids the legacy store wrote. This is what makes re-ingesting the same
 //! fact idempotent instead of duplicative.
 
 use uuid::Uuid;
 
-/// cognee hardcodes the OID namespace (`uuid.NAMESPACE_OID`).
+/// the legacy store hardcodes the OID namespace (`uuid.NAMESPACE_OID`).
 const NAMESPACE_OID: Uuid = Uuid::from_bytes([
     0x6b, 0xa7, 0xb8, 0x12, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8,
 ]);
 
-/// cognee's `_normalize_identity_value` / `generate_node_id` normalisation:
+/// the legacy `_normalize_identity_value` / `generate_node_id` normalisation:
 /// lower-case, spaces to underscores, apostrophes stripped.
 pub fn normalize(value: &str) -> String {
     value.to_lowercase().replace(' ', "_").replace('\'', "")
@@ -73,7 +73,7 @@ mod tests {
 
     /// These ids exist in the real store; they pin the whole identity scheme.
     #[test]
-    fn reproduces_ids_cognee_wrote() {
+    fn reproduces_ids_legacy_wrote() {
         assert_eq!(
             entity_id("开发习惯（通用版）").to_string(),
             "4bd4116f-24c2-505b-8bbd-4d942097c02a"
@@ -89,7 +89,7 @@ mod tests {
     }
 
     #[test]
-    fn normalization_matches_cognee() {
+    fn normalization_matches_legacy() {
         assert_eq!(normalize("Alice Smith"), "alice_smith");
         assert_eq!(normalize("O'Brien's"), "obriens");
         assert_eq!(node_name("Alice's"), "alices");

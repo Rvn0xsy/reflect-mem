@@ -1,11 +1,9 @@
 //! MCP server (rmcp).
 //!
-//! Exposes the memory API over MCP. This first cut ships the **read path**
-//! (`recall`), which is the operation an agent runs before answering and the
-//! one already verified end to end. The write path (`remember`/`forget`) is
-//! deliberately absent rather than half-implemented: writing has to reproduce
-//! cognee's graph/vector schema exactly, and a sloppy write would corrupt a
-//! real 651 MB memory store. See `docs/design.md` §13.
+//! Exposes the memory API over MCP: `remember` / `recall` / `forget`. Writing
+//! must reproduce the graph/vector schema exactly or it would corrupt the
+//! store, so the write path stays schema-faithful to the migrated data. See
+//! `docs/design.md`.
 
 use std::sync::Arc;
 
@@ -45,7 +43,7 @@ fn parse_uuid(raw: &str, what: &str) -> std::result::Result<Uuid, ErrorData> {
 }
 
 impl MemoryService {
-    /// Build from the environment, reusing the existing cognee data root.
+    /// Build from the environment, reusing the existing data root.
     pub async fn from_env() -> anyhow::Result<Self> {
         let db = lancedb::connect(&config::lancedb_path().to_string_lossy())
             .execute()
@@ -281,9 +279,9 @@ impl ServerHandler for MemoryServer {
                 env!("CARGO_PKG_VERSION"),
             ))
             .with_instructions(
-                "Long-term memory backed by a cognee-shaped store (SQLite property graph \
-                 + LanceDB vectors). Use `recall` before answering a question that may \
-                 depend on earlier context, and say so honestly when it finds nothing.",
+                "Long-term memory backed by a SQLite property graph + LanceDB vectors. \
+                 Use `recall` before answering a question that may depend on earlier \
+                 context, and say so honestly when it finds nothing.",
             )
     }
 }

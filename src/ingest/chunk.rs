@@ -1,6 +1,6 @@
 //! Text chunking.
 //!
-//! cognee's default is `TextChunker` with `chunk_size ≈ 1500` tokens on
+//! The default is `TextChunker` with `chunk_size ≈ 1500` tokens on
 //! paragraph/sentence boundaries. Without the Qwen tokenizer we estimate
 //! tokens (CJK ≈ 1/char, other ≈ 1/4 chars) — semantically compatible per
 //! design decision D12, not byte-identical.
@@ -14,7 +14,7 @@ pub struct Chunk {
     pub text: String,
     pub chunk_size: usize,
     pub chunk_index: usize,
-    /// cognee's cut types: `paragraph_end` / `sentence_end` / `sentence_cut`.
+    /// The cut types: `paragraph_end` / `sentence_end` / `sentence_cut`.
     pub cut_type: String,
 }
 

@@ -1,6 +1,6 @@
 //! `forget` — provenance-scoped deletion across all three stores.
 //!
-//! Mirrors cognee's graph-provenance delete (the mode the migrated store is
+//! Mirrors the graph-provenance delete (the mode the migrated store is
 //! in, `GraphMetadata.provenance_version = 1`):
 //!
 //! 1. find nodes/edges carrying the ref `source_ref:v1:<dataset>:<data>`

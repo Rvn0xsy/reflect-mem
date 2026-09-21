@@ -1,6 +1,6 @@
 //! `remember` — the permanent-memory write path.
 //!
-//! Mirrors cognee's cognify pipeline end to end (design doc §13.2):
+//! Mirrors the ingestion pipeline end to end (design doc §13.2):
 //!
 //! 1. store the source text (`data/text_<md5>.txt`) and the `data` row
 //! 2. chunk the text
@@ -409,7 +409,7 @@ fn build_datapoints(
 
             // Entity -[is_a]-> EntityType
             raw_edges.push(edge_raw(e_id, et_id, "is_a", None));
-            // chunk -[contains]-> Entity (with cognee's edge_text shape)
+            // chunk -[contains]-> Entity (with the canonical edge_text shape)
             let contains_extra = if node.description.trim().is_empty() {
                 None
             } else {
@@ -426,7 +426,7 @@ fn build_datapoints(
             chunk_entity_ids.push((node.id.clone(), e_id));
         }
 
-        // LLM edges between entities; cognee stamps relationship_type + edge_text
+        // LLM edges between entities; the legacy pipeline stamps relationship_type + edge_text
         for edge in &graph.edges {
             let Some((_, src)) = chunk_entity_ids
                 .iter()

@@ -5,8 +5,8 @@ description: >-
   `mcp_reflect_mem_forget`) — when to recall, remember, and forget, the two retrieval modes, the gotchas, and worked
   examples. Load this skill whenever the conversation seems to be missing context, the user references something from
   earlier or asks you to remember/forget information, you are about to make a remember/recall/forget call, or the
-  memory policy in your system prompt tells you to consult it. This supersedes the old `cognee-memory` skill: the
-  memory backend is the Rust `reflect-mem` server, NOT `mcp__cognee__*`. Treat the memory tool as active context:
+  memory policy in your system prompt tells you to consult it. The memory backend is the Rust `reflect-mem`
+  server. Treat the memory tool as active context:
   check it before answering rather than treating it as an optional side feature.
 ---
 
@@ -16,8 +16,7 @@ description: >-
 background feature: checking it is cheap, and the payoff is reusing what the user already told you instead of asking
 again or losing it.
 
-> **Migration note:** all memory calls now go to `reflect-mem`. If you have any habit or note referencing
-> `mcp__cognee__*`, `cognee-mcp`, or the Python cognee service — drop it. Use `mcp_reflect_mem_*` only.
+> **Migration note:** all memory calls now go to `reflect-mem`. Use `mcp_reflect_mem_*` only.
 
 ## The three tools
 

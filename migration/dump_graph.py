@@ -15,7 +15,7 @@ can migrate the on-disk format in place. This script therefore:
 
   * defaults to ``--copy``, which snapshots the graph to a temp file and dumps
     from the snapshot, leaving the original untouched;
-  * pins ``ladybug==0.19.0`` in ``requirements.txt`` (what cognee pins).
+  * pins ``ladybug==0.19.0`` in ``requirements.txt`` (what the original pipeline pins).
 
 Usage
 -----
@@ -177,7 +177,7 @@ def _expected_counts(graph_path: Path):
 
 
 def main() -> None:
-    data_root = Path.home() / ".agents" / "cognee-memory"
+    data_root = Path.home() / ".agents" / "reflect-mem"
     default_graph = data_root / "system" / "databases" / "cognee_graph_ladybug"
 
     parser = argparse.ArgumentParser(description=__doc__)

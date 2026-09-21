@@ -14,9 +14,9 @@ const DEFAULT_ENDPOINT: &str = "http://localhost:11434/api/embed";
 const DEFAULT_MODEL: &str = "qwen3-embedding:0.6b";
 const DEFAULT_DIMENSIONS: usize = 1024;
 
-/// The existing `.env` points Ollama at `host.docker.internal` because cognee
-/// ran in a container. A host-native binary cannot resolve that, so rewrite it
-/// unless we ourselves are in Docker.
+/// The existing `.env` points Ollama at `host.docker.internal` because the
+/// legacy pipeline ran in a container. A host-native binary cannot resolve
+/// that, so rewrite it unless we ourselves are in Docker.
 fn rewrite_endpoint_for_host(raw: &str, in_docker: bool) -> String {
     if in_docker {
         raw.to_string()
