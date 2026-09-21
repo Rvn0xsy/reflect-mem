@@ -10,6 +10,7 @@
 [![SQLite](https://img.shields.io/badge/SQLite-graph%2Frelational-003B57?logo=sqlite&logoColor=white)]()
 [![LanceDB](https://img.shields.io/badge/LanceDB-vectors-8A2BE2)]()
 [![version 0.1.0](https://img.shields.io/badge/version-0.1.0-lightgrey)]()
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [English](README.md) · **简体中文**
 
@@ -351,4 +352,4 @@ cognee 采用 [Apache License 2.0](https://github.com/topoteretes/cognee/blob/ma
 
 ## 许可证
 
-尚未确定许可证。在选定之前保留所有权利。
+MIT —— 见 [`LICENSE`](LICENSE)。上游归属声明见 [`NOTICE`](NOTICE)。

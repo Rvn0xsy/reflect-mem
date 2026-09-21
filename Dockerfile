@@ -46,6 +46,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # --------------------------------------------------------------------------- #
 FROM debian:bookworm-slim AS runtime
 
+LABEL org.opencontainers.image.title="reflect-mem" \
+      org.opencontainers.image.description="Long-term memory MCP server (remember / recall / forget)" \
+      org.opencontainers.image.licenses="MIT"
+
 # TLS comes from rustls and SQLite is statically bundled, so there is no
 # OpenSSL/libsqlite to install. `curl` backs the container healthcheck.
 RUN apt-get update \
@@ -55,6 +59,9 @@ RUN apt-get update \
  && install -d -o reflect-mem -g reflect-mem /data
 
 COPY --from=build /usr/local/bin/reflect-mem /usr/local/bin/reflect-mem
+
+# Distribute the licence with the binary, as MIT requires.
+COPY LICENSE NOTICE /usr/share/doc/reflect-mem/
 
 # The data root holds the graph / vector / relational stores and `config.toml`.
 ENV DATA_ROOT=/data \

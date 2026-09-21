@@ -10,6 +10,7 @@
 [![SQLite](https://img.shields.io/badge/SQLite-graph%2Frelational-003B57?logo=sqlite&logoColor=white)]()
 [![LanceDB](https://img.shields.io/badge/LanceDB-vectors-8A2BE2)]()
 [![version 0.1.0](https://img.shields.io/badge/version-0.1.0-lightgrey)]()
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **English** · [简体中文](README-zh.md)
 
@@ -356,4 +357,4 @@ cognee source code. See [NOTICE](NOTICE).
 
 ## License
 
-Not yet licensed. All rights reserved until a license is chosen.
+MIT — see [`LICENSE`](LICENSE). Upstream attribution lives in [`NOTICE`](NOTICE).
