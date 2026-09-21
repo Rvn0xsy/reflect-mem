@@ -137,9 +137,7 @@ struct FileMcp {
 }
 
 fn env_opt(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .filter(|v| !v.trim().is_empty())
+    std::env::var(key).ok().filter(|v| !v.trim().is_empty())
 }
 
 fn default_data_root() -> PathBuf {
