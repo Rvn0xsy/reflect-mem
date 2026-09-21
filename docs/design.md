@@ -313,7 +313,7 @@ dataset_id: Option<String>,
 2. **Rust 导入器**（`reflect-mem migrate` 子命令）：
    - 读 JSONL，批量 INSERT 进 `reflect-mem.graph.sqlite`（事务 + prepared statement）。
 3. **校验**：节点/边计数对账，抽样比对 `type` / `relationship_name` 分布。
-4. 迁移完成后：`cognee_graph_ladybug` 归档不删（保底回滚），Python venv 可卸载。
+4. 迁移完成后：`cognee_graph_ladybug` 曾作为保底归档保留；经 `reflect-mem inspect` 与计数对账验证后，已于 2026-09-21 删除（图数据现仅存于 `reflect-mem.graph.sqlite`），Python venv 可卸载。
 
 > 为什么 dump 而不是 re-cognify：re-cognify 要拿 127 个源文本在 Rust 里重跑全部 LLM 抽取，重复花 MiniMax 的钱；dump 是纯数据搬运，免费且快。用户已确认「彻底摆脱 Python」指交付物，迁移工具可用一次性 Python。
 

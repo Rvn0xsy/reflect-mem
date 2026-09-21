@@ -19,6 +19,8 @@ python dump_graph.py --out ./out
 
 默认从 `~/.agents/reflect-mem/system/databases/cognee_graph_ladybug` 读，可用 `--graph` 覆盖。
 
+> **注意**：迁移验证通过后，源图 `cognee_graph_ladybug` 已于 2026-09-21 删除，本脚本的默认路径现已不存在——它是历史记录，仅用于说明当时的迁移过程。
+
 ## 安全
 
 **打开图的 ladybug 版本必须与写它的版本一致**，否则会在原地迁移磁盘格式。因此脚本：
