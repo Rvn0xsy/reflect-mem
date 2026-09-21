@@ -1,31 +1,10 @@
 //! OpenAI-compatible chat-completions client.
 //!
-//! Defaults match the Python `.env`: MiniMax M2.7 behind an OpenAI-compatible
-//! endpoint. Used for `recall` synthesis (SUMMARIES / GRAPH_COMPLETION) and,
-//! later, entity extraction in the write path.
+//! Used for `recall` synthesis (SUMMARIES / GRAPH_COMPLETION) and entity
+//! extraction in the write path. Configuration comes from [`crate::settings`].
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-
-const DEFAULT_ENDPOINT: &str = "https://api.minimaxi.com/v1";
-const DEFAULT_MODEL: &str = "MiniMax-M2.7-highspeed";
-
-fn env_or(key: &str, default: &str) -> String {
-    std::env::var(key)
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| default.to_string())
-}
-
-/// Map the `LLM_THINKING` value to a boolean. `disabled` / `off` / `false` /
-/// `none` turn thinking off; everything else (empty, `adaptive`, `on`, …)
-/// keeps the provider default.
-fn thinking_disabled(raw: &str) -> bool {
-    matches!(
-        raw.trim().to_ascii_lowercase().as_str(),
-        "disabled" | "off" | "false" | "0" | "none"
-    )
-}
 
 /// litellm-style configs prefix the provider (`openai/MiniMax-M2.7-highspeed`);
 /// a raw OpenAI-compatible endpoint wants the bare model id.
@@ -93,25 +72,20 @@ pub struct LlmClient {
 }
 
 impl LlmClient {
-    /// Build from `LLM_ENDPOINT` / `LLM_MODEL` / `LLM_API_KEY` / `LLM_ARGS` /
-    /// `LLM_THINKING`. `LLM_THINKING=disabled` (also `off` / `false` / `none`)
-    /// turns chain-of-thought off; anything else keeps the provider default
-    /// (thinking on).
-    pub fn from_env() -> Result<Self> {
-        let base_url = env_or("LLM_ENDPOINT", DEFAULT_ENDPOINT);
-        let model = env_or("LLM_MODEL", DEFAULT_MODEL);
-        let api_key = std::env::var("LLM_API_KEY")
-            .ok()
-            .filter(|k| !k.trim().is_empty())
-            .context("LLM_API_KEY is not set")?;
-        let extra_args = std::env::var("LLM_ARGS")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-            .map(|v| serde_json::from_str(&v).context("LLM_ARGS must be a JSON object"))
-            .transpose()?
-            .unwrap_or_else(|| serde_json::json!({}));
-        let disable_thinking = thinking_disabled(&std::env::var("LLM_THINKING").unwrap_or_default());
-        Self::with_extra_args(base_url, model, api_key, extra_args, disable_thinking)
+    /// Build from the resolved settings (config file overlaid by env).
+    pub fn from_settings() -> Result<Self> {
+        let s = crate::settings::get();
+        let api_key = s.llm.api_key.trim();
+        if api_key.is_empty() {
+            bail!("LLM API key is not set — configure `llm.api_key` or LLM_API_KEY");
+        }
+        Self::with_extra_args(
+            s.llm.endpoint.clone(),
+            s.llm.model.clone(),
+            api_key.to_string(),
+            s.llm.args.clone(),
+            s.llm.disable_thinking,
+        )
     }
 
     pub fn new(base_url: String, model: String, api_key: String) -> Result<Self> {
@@ -235,19 +209,5 @@ mod tests {
             c.completions_url(),
             "https://api.minimaxi.com/v1/chat/completions"
         );
-    }
-
-    #[test]
-    fn thinking_flag_parses_off_values() {
-        for v in ["disabled", "off", "false", "0", "none", "  DISABLED "] {
-            assert!(thinking_disabled(v), "{v} should disable thinking");
-        }
-    }
-
-    #[test]
-    fn thinking_flag_keeps_default_on() {
-        for v in ["", "adaptive", "on", "true", "enabled", "garbage"] {
-            assert!(!thinking_disabled(v), "{v:?} should keep thinking on");
-        }
     }
 }

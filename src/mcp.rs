@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{ErrorData, Implementation, ServerCapabilities, ServerConfig};
@@ -43,14 +44,14 @@ fn parse_uuid(raw: &str, what: &str) -> std::result::Result<Uuid, ErrorData> {
 }
 
 impl MemoryService {
-    /// Build from the environment, reusing the existing data root.
-    pub async fn from_env() -> anyhow::Result<Self> {
+    /// Build from the resolved settings, reusing the existing data root.
+    pub async fn from_settings() -> anyhow::Result<Self> {
         let db = lancedb::connect(&config::lancedb_path().to_string_lossy())
             .execute()
             .await?;
         Ok(Self {
-            embedder: EmbeddingClient::from_env()?,
-            llm: LlmClient::from_env()?,
+            embedder: EmbeddingClient::from_settings()?,
+            llm: LlmClient::from_settings()?,
             graph: GraphStore::open(&config::graph_db_path())?,
             relational: RelationalStore::open(&config::relational_db_path())?,
             vectors: VectorStore::new(db.clone()),
@@ -119,10 +120,10 @@ pub struct MemoryServer {
 }
 
 impl MemoryServer {
-    pub async fn from_env() -> anyhow::Result<Self> {
+    pub async fn from_settings() -> anyhow::Result<Self> {
         Ok(Self {
             tool_router: Self::tool_router(),
-            svc: Arc::new(MemoryService::from_env().await?),
+            svc: Arc::new(MemoryService::from_settings().await?),
         })
     }
 
@@ -139,6 +140,102 @@ impl MemoryServer {
             .map_err(|e| anyhow::anyhow!("MCP server task failed: {e}"))?;
         Ok(())
     }
+
+    /// Serve over streamable HTTP at `/mcp` until the process is stopped.
+    ///
+    /// When `token` is set, every request must carry
+    /// `Authorization: Bearer <token>`; without one the endpoint is open, which
+    /// is only safe when it is bound to loopback.
+    pub async fn serve_streamable_http(
+        self,
+        bind: &str,
+        token: Option<String>,
+    ) -> anyhow::Result<()> {
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::streamable_http_server::tower::{
+            StreamableHttpServerConfig, StreamableHttpService,
+        };
+
+        let listener = tokio::net::TcpListener::bind(bind)
+            .await
+            .with_context(|| format!("binding {bind}"))?;
+        let addr = listener.local_addr()?;
+
+        // The service factory is synchronous, so build the server once and
+        // hand out clones (each MCP session gets its own handler).
+        let service: StreamableHttpService<Self, LocalSessionManager> = StreamableHttpService::new(
+            {
+                let server = self.clone();
+                move || Ok(server.clone())
+            },
+            Arc::new(LocalSessionManager::default()),
+            StreamableHttpServerConfig::default(),
+        );
+
+        let mut router = axum::Router::new().nest_service("/mcp", service);
+        match &token {
+            Some(t) => {
+                router = router.layer(axum::middleware::from_fn_with_state(
+                    BearerToken(t.clone()),
+                    require_bearer,
+                ));
+                eprintln!("reflect-mem MCP on http://{addr}/mcp (bearer token required)");
+            }
+            None => {
+                eprintln!(
+                    "reflect-mem MCP on http://{addr}/mcp (no auth — set mcp.token to require one)"
+                );
+            }
+        }
+
+        axum::serve(listener, router)
+            .await
+            .context("serving streamable HTTP")?;
+        Ok(())
+    }
+}
+
+/// Shared state for the bearer-token middleware.
+#[derive(Clone)]
+struct BearerToken(String);
+
+/// Reject any request that does not present the expected bearer token.
+async fn require_bearer(
+    axum::extract::State(expected): axum::extract::State<BearerToken>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let presented = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or("");
+
+    if token_matches(presented.trim(), &expected.0) {
+        return next.run(req).await;
+    }
+
+    let mut res = axum::response::Response::new(axum::body::Body::from("unauthorized\n"));
+    *res.status_mut() = axum::http::StatusCode::UNAUTHORIZED;
+    res.headers_mut().insert(
+        axum::http::header::WWW_AUTHENTICATE,
+        axum::http::HeaderValue::from_static("Bearer"),
+    );
+    res
+}
+
+/// Constant-time comparison, so the token cannot be recovered by timing.
+fn token_matches(presented: &str, expected: &str) -> bool {
+    let (a, b) = (presented.as_bytes(), expected.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 #[tool_router(router = tool_router)]

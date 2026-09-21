@@ -38,6 +38,8 @@ the 520 MB `reflect-mem.lancedb` vector store are all opened **in place**, byte-
   (provenance-scoped, cross-store deletion), plus `doctor` for consistency repair.
 - **Deterministic IDs.** Entities, types and edges are `uuid5`-derived, so re-ingesting the same facts is
   idempotent and deduplicated.
+- **Config file + two transports.** One TOML file (env vars override it) drives everything, and the MCP
+  server speaks **stdio** or **streamable HTTP** with optional bearer-token auth.
 
 ---
 
@@ -83,29 +85,55 @@ Requires a recent stable Rust (`edition 2024`).
 
 ### 2. Configure
 
+Everything can live in one TOML file (see [`reflect-mem.example.toml`](reflect-mem.example.toml)):
+
 ```bash
-export LLM_ENDPOINT=https://api.minimaxi.com/v1
-export LLM_MODEL=MiniMax-M3            # or MiniMax-M2.7-highspeed
-export LLM_API_KEY=...
-export LLM_THINKING=disabled           # skip chain-of-thought (faster); omit to keep thinking on
-
-export EMBEDDING_ENDPOINT=http://localhost:11434/api/embed
-export EMBEDDING_MODEL=qwen3-embedding:0.6b
-export EMBEDDING_DIMENSIONS=1024
-
-export DATA_ROOT=~/.agents/reflect-mem
+cp reflect-mem.example.toml ~/.agents/reflect-mem/config.toml
+$EDITOR ~/.agents/reflect-mem/config.toml
 ```
 
-> `EMBEDDING_MODEL` **must** match the model that produced the existing vectors, or the reused
+```toml
+[llm]
+model = "MiniMax-M3"
+api_key = "sk-..."
+thinking = "disabled"          # skip chain-of-thought (faster)
+
+[embedding]
+model = "qwen3-embedding:0.6b" # must match the model that produced the vectors
+dimensions = 1024
+```
+
+Environment variables still work and **override** the file, so containers/CI can inject secrets without
+editing config:
+
+```bash
+LLM_API_KEY=sk-... reflect-mem mcp
+```
+
+Point at a different file with `--config /path/to/config.toml` or `$REFLECT_MEM_CONFIG`.
+
+> `embedding.model` **must** match the model that produced the existing vectors, or the reused
 > `reflect-mem.lancedb` becomes unusable.
 
 ### 3. Serve over MCP
+
+**stdio** (local agents):
 
 ```bash
 reflect-mem mcp --transport stdio
 ```
 
-Register it in your MCP client:
+**Streamable HTTP + bearer token** (remote / shared deployments):
+
+```bash
+reflect-mem mcp --transport streamable-http --bind 127.0.0.1:8080 --token "$SECRET"
+# -> reflect-mem MCP on http://127.0.0.1:8080/mcp (bearer token required)
+```
+
+Every request must then carry `Authorization: Bearer $SECRET`; requests without a valid token get
+`401`. With no token configured the endpoint is **open** — only do that on loopback.
+
+Register with an MCP client (stdio):
 
 ```json
 {
@@ -113,8 +141,21 @@ Register it in your MCP client:
     "reflect-mem": {
       "transport": "stdio",
       "command": "/path/to/reflect-mem",
-      "args": ["mcp", "--transport", "stdio"],
-      "env": { "DATA_ROOT": "~/.agents/reflect-mem", "LLM_MODEL": "MiniMax-M3" }
+      "args": ["mcp", "--config", "/home/me/.agents/reflect-mem/config.toml"]
+    }
+  }
+}
+```
+
+or point it at the HTTP endpoint:
+
+```json
+{
+  "mcpServers": {
+    "reflect-mem": {
+      "type": "http",
+      "url": "http://127.0.0.1:8080/mcp",
+      "headers": { "Authorization": "Bearer ${SECRET}" }
     }
   }
 }
@@ -143,23 +184,38 @@ reflect-mem forget --dataset main_dataset
 | `remember --data <text>` | Store permanent memory (extract entities, write graph + vectors) |
 | `forget --data-id <uuid>` \| `--dataset <name>` \| `--everything` | Delete memory |
 | `doctor --dump <dir> [--heal-vectors]` | Verify and repair store consistency |
-| `mcp --transport stdio` | Serve the memory API over MCP |
+| `mcp --transport stdio` | Serve the memory API over stdio |
+| `mcp --transport streamable-http --bind <addr> --token <t>` | Serve over HTTP at `/mcp`, requiring `Authorization: Bearer <t>` |
 
 ---
 
 ## Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LLM_ENDPOINT` | `https://api.minimaxi.com/v1` | OpenAI-compatible chat-completions endpoint |
-| `LLM_MODEL` | `MiniMax-M2.7-highspeed` | Model id (an `openai/` prefix is stripped) |
-| `LLM_API_KEY` | — | Required |
-| `LLM_ARGS` | `{}` | Extra request fields (e.g. `{"reasoning_split": true}`) |
-| `LLM_THINKING` | *(unset)* | `disabled` skips MiniMax chain-of-thought; omit or `adaptive` keeps it on |
-| `EMBEDDING_ENDPOINT` | `http://localhost:11434/api/embed` | Ollama embed endpoint (`host.docker.internal` is auto-rewritten to `localhost` outside Docker) |
-| `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | Must match historical data |
-| `EMBEDDING_DIMENSIONS` | `1024` | Must match historical data |
-| `DATA_ROOT` | `~/.agents/reflect-mem` | Data root (`system/databases/…` underneath) |
+Resolution order, highest priority first:
+
+1. CLI flags (`--config`, `mcp --bind` / `--token`)
+2. environment variables
+3. the TOML config file
+4. built-in defaults
+
+The config file defaults to `<data_root>/config.toml`; override the path with `--config` or
+`REFLECT_MEM_CONFIG`. Start from [`reflect-mem.example.toml`](reflect-mem.example.toml).
+
+| TOML key | Env var | Default | Description |
+|----------|---------|---------|-------------|
+| `data_root` | `DATA_ROOT` | `~/.agents/reflect-mem` | Data root (`system/databases/…` underneath) |
+| `llm.endpoint` | `LLM_ENDPOINT` | `https://api.minimaxi.com/v1` | OpenAI-compatible chat-completions endpoint |
+| `llm.model` | `LLM_MODEL` | `MiniMax-M2.7-highspeed` | Model id (an `openai/` prefix is stripped) |
+| `llm.api_key` | `LLM_API_KEY` | — | Required |
+| `llm.args` | `LLM_ARGS` | `{}` | Extra request fields (e.g. `{ reasoning_split = true }`) |
+| `llm.thinking` | `LLM_THINKING` | *(unset)* | `disabled` skips chain-of-thought; `adaptive`/unset keeps it on |
+| `embedding.endpoint` | `EMBEDDING_ENDPOINT` | `http://localhost:11434/api/embed` | Ollama embed endpoint (`host.docker.internal` auto-rewritten outside Docker) |
+| `embedding.model` | `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | Must match the existing vectors |
+| `embedding.dimensions` | `EMBEDDING_DIMENSIONS` | `1024` | Must match the existing vectors |
+| `mcp.transport` | `MCP_TRANSPORT` | `stdio` | `stdio` or `streamable-http` |
+| `mcp.bind` | `MCP_BIND` | `127.0.0.1:8080` | Address for `streamable-http` |
+| `mcp.token` | `MCP_TOKEN` | *(unset)* | Bearer token required on HTTP requests |
+| — | `REFLECT_MEM_CONFIG` | `<data_root>/config.toml` | Config file path |
 
 ---
 
@@ -228,7 +284,8 @@ BENCH_ROOT=/tmp/reflect-mem-bench cargo run --release --bin bench
 ```
 src/
   main.rs       CLI entry point
-  mcp.rs        rmcp server + tool registration
+  mcp.rs        rmcp server: tools + stdio / streamable-HTTP + bearer auth
+  settings.rs   config file (TOML) + env resolution
   recall.rs     read path (SUMMARIES / GRAPH_COMPLETION)
   remember.rs   write path (permanent-memory ETL)
   forget.rs     cross-store deletion
@@ -236,12 +293,13 @@ src/
   migrate.rs    graph-dump importer
   llm.rs        MiniMax client (OpenAI-compatible)
   embed.rs      Ollama embedding client
-  config.rs     env + path resolution
+  config.rs     data-root path layout
   storage/      graph / vector / relational / session-cache
   ingest/       chunking + entity extraction
 docs/           design
 migration/      one-shot graph migration tooling
 skills/         operator skill for the AI agent
+reflect-mem.example.toml   annotated config template
 ```
 
 ## Acknowledgements

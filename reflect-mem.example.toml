@@ -1,0 +1,32 @@
+# reflect-mem configuration.
+#
+# Lookup order:  --config <file>  >  $REFLECT_MEM_CONFIG  >  <DATA_ROOT>/config.toml
+#
+# Every value can also be supplied as an environment variable, and environment
+# variables WIN over this file — handy for containers and CI. Delete any line to
+# fall back to its default.
+
+data_root = "~/.agents/reflect-mem"
+
+[llm]
+# OpenAI-compatible chat-completions endpoint, used for entity extraction and
+# recall synthesis.
+endpoint = "https://api.minimaxi.com/v1"
+model = "MiniMax-M3"            # or "MiniMax-M2.7-highspeed"
+api_key = "sk-..."              # or export LLM_API_KEY
+thinking = "adaptive"           # "disabled" skips chain-of-thought (faster)
+# Extra request fields, merged verbatim into the JSON payload.
+# args = { reasoning_split = true }
+
+[embedding]
+# Must match the model that produced reflect-mem.lancedb, or the existing
+# vectors become unusable.
+endpoint = "http://localhost:11434/api/embed"
+model = "qwen3-embedding:0.6b"
+dimensions = 1024
+
+[mcp]
+transport = "stdio"             # "stdio" or "streamable-http"
+bind = "127.0.0.1:8080"         # streamable-http only
+# When set, HTTP requests must carry `Authorization: Bearer <token>`.
+# token = "a-long-random-secret"

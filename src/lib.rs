@@ -12,4 +12,5 @@ pub mod mcp;
 pub mod migrate;
 pub mod recall;
 pub mod remember;
+pub mod settings;
 pub mod storage;

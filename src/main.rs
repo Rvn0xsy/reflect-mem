@@ -17,6 +17,9 @@ use uuid::Uuid;
     about = "Rust long-term memory-management MCP server"
 )]
 struct Cli {
+    /// Path to the TOML config file (defaults to `<DATA_ROOT>/config.toml`).
+    #[arg(long, global = true, value_name = "FILE")]
+    config: Option<PathBuf>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -105,15 +108,22 @@ enum Commands {
     },
     /// Serve the memory API over MCP.
     Mcp {
-        /// Transport to serve on. Supported: stdio.
-        #[arg(long, default_value = "stdio")]
-        transport: String,
+        /// Transport: `stdio` or `streamable-http`.
+        #[arg(long)]
+        transport: Option<String>,
+        /// Address to bind for streamable-http, e.g. `127.0.0.1:8080`.
+        #[arg(long)]
+        bind: Option<String>,
+        /// Bearer token required on streamable-http requests.
+        #[arg(long)]
+        token: Option<String>,
     },
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    reflect_mem::settings::init(cli.config.as_deref())?;
     match cli.command {
         Commands::Migrate { input, graph } => {
             let graph = graph.unwrap_or_else(config::graph_db_path);
@@ -186,10 +196,10 @@ async fn main() -> anyhow::Result<()> {
             graph,
         } => {
             let search_type = SearchType::parse(&search_type)?;
-            let embedder = EmbeddingClient::from_env()?;
+            let embedder = EmbeddingClient::from_settings()?;
             let vectors = VectorStore::open(&config::lancedb_path()).await?;
             let graph = GraphStore::open(&graph.unwrap_or_else(config::graph_db_path))?;
-            let llm = LlmClient::from_env()?;
+            let llm = LlmClient::from_settings()?;
 
             let opts = RecallOptions {
                 search_type,
@@ -221,8 +231,8 @@ async fn main() -> anyhow::Result<()> {
                     .with_context(|| format!("reading {}", f.display()))?,
                 _ => anyhow::bail!("provide --data or --file"),
             };
-            let embedder = reflect_mem::embed::EmbeddingClient::from_env()?;
-            let llm = LlmClient::from_env()?;
+            let embedder = reflect_mem::embed::EmbeddingClient::from_settings()?;
+            let llm = LlmClient::from_settings()?;
             let graph = GraphStore::open(&config::graph_db_path())?;
             let relational = reflect_mem::storage::relational::RelationalStore::open(
                 &config::relational_db_path(),
@@ -304,7 +314,7 @@ async fn main() -> anyhow::Result<()> {
                 report.nodes_restored, report.edges_deleted
             );
             if heal_vectors {
-                let embedder = reflect_mem::embed::EmbeddingClient::from_env()?;
+                let embedder = reflect_mem::embed::EmbeddingClient::from_settings()?;
                 let vectors =
                     reflect_mem::storage::vector::VectorStore::open(&config::lancedb_path())
                         .await?;
@@ -315,17 +325,36 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
         }
-        Commands::Mcp { transport } => match transport.as_str() {
-            "stdio" => {
-                // stdout is the protocol channel here: never print to it.
-                eprintln!("reflect-mem MCP serving on stdio");
-                reflect_mem::mcp::MemoryServer::from_env()
-                    .await?
-                    .serve_stdio()
-                    .await?;
+        Commands::Mcp {
+            transport,
+            bind,
+            token,
+        } => {
+            let settings = reflect_mem::settings::get();
+            let transport = transport.unwrap_or_else(|| settings.mcp.transport.clone());
+            let bind = bind.unwrap_or_else(|| settings.mcp.bind.clone());
+            let token = token.or_else(|| settings.mcp.token.clone());
+
+            match transport.as_str() {
+                "stdio" => {
+                    // stdout is the protocol channel here: never print to it.
+                    eprintln!("reflect-mem MCP serving on stdio");
+                    reflect_mem::mcp::MemoryServer::from_settings()
+                        .await?
+                        .serve_stdio()
+                        .await?;
+                }
+                "streamable-http" | "http" => {
+                    reflect_mem::mcp::MemoryServer::from_settings()
+                        .await?
+                        .serve_streamable_http(&bind, token)
+                        .await?;
+                }
+                other => anyhow::bail!(
+                    "unsupported transport {other:?}; use `stdio` or `streamable-http`"
+                ),
             }
-            other => anyhow::bail!("unsupported transport {other:?}; expected stdio"),
-        },
+        }
     }
     Ok(())
 }

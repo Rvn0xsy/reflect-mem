@@ -1,3 +1,5 @@
 /target
 # contains the LLM API key
 .pi/
+# local config (holds the LLM API key)
+config.toml

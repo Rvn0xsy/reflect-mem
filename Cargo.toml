@@ -6,6 +6,8 @@ default-run = "reflect-mem"
 
 [dependencies]
 anyhow = "1.0.104"
+# axum 0.8 must match the version rmcp's streamable-http server is built against.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 # arrow must match the version lancedb 0.37.1 links against (58.4.0), or the
 # RecordBatch / Array types we hand to lancedb won't unify with its own.
 arrow-array = "=58.4.0"
@@ -26,7 +28,8 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
-tokio = { version = "1.53.1", features = ["rt-multi-thread"] }
+toml = "1"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net"] }
 uuid = { version = "1.26.1", features = ["v4", "v5"] }
 
 [profile.release]

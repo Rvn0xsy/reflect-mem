@@ -1,6 +1,6 @@
 //! Embedding client (Ollama HTTP).
 //!
-//! Must produce the *same* vectors as the Python pipeline, or the 520 MB of
+//! Must produce the *same* vectors as the original pipeline, or the 520 MB of
 //! `reflect-mem.lancedb` we reuse in place becomes unusable: model
 //! `qwen3-embedding:0.6b`, 1024 dimensions. The dimension is asserted on every
 //! response — a silent mismatch would poison vector search.
@@ -10,12 +10,8 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
-const DEFAULT_ENDPOINT: &str = "http://localhost:11434/api/embed";
-const DEFAULT_MODEL: &str = "qwen3-embedding:0.6b";
-const DEFAULT_DIMENSIONS: usize = 1024;
-
 /// The existing `.env` points Ollama at `host.docker.internal` because the
-/// legacy pipeline ran in a container. A host-native binary cannot resolve
+/// original pipeline ran in a container. A host-native binary cannot resolve
 /// that, so rewrite it unless we ourselves are in Docker.
 fn rewrite_endpoint_for_host(raw: &str, in_docker: bool) -> String {
     if in_docker {
@@ -27,13 +23,6 @@ fn rewrite_endpoint_for_host(raw: &str, in_docker: bool) -> String {
 
 fn running_in_docker() -> bool {
     Path::new("/.dockerenv").exists() || Path::new("/app").is_dir()
-}
-
-fn env_or(key: &str, default: &str) -> String {
-    std::env::var(key)
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| default.to_string())
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,18 +40,11 @@ pub struct EmbeddingClient {
 }
 
 impl EmbeddingClient {
-    /// Build from `EMBEDDING_ENDPOINT` / `EMBEDDING_MODEL` / `EMBEDDING_DIMENSIONS`,
-    /// matching the Python config names so the same `.env` keeps working.
-    pub fn from_env() -> Result<Self> {
-        let endpoint = rewrite_endpoint_for_host(
-            &env_or("EMBEDDING_ENDPOINT", DEFAULT_ENDPOINT),
-            running_in_docker(),
-        );
-        let model = env_or("EMBEDDING_MODEL", DEFAULT_MODEL);
-        let dimensions = env_or("EMBEDDING_DIMENSIONS", &DEFAULT_DIMENSIONS.to_string())
-            .parse::<usize>()
-            .context("EMBEDDING_DIMENSIONS must be a number")?;
-        Self::new(endpoint, model, dimensions)
+    /// Build from the resolved settings (config file overlaid by env).
+    pub fn from_settings() -> Result<Self> {
+        let s = crate::settings::get();
+        let endpoint = rewrite_endpoint_for_host(&s.embedding.endpoint, running_in_docker());
+        Self::new(endpoint, s.embedding.model.clone(), s.embedding.dimensions)
     }
 
     pub fn new(endpoint: String, model: String, dimensions: usize) -> Result<Self> {

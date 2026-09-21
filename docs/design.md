@@ -331,27 +331,42 @@ dataset_id: Option<String>,
 
 ## 10. 配置
 
-环境变量（对齐 Python 版命名，便于平滑切换）：
+解析优先级：**CLI > 环境变量 > TOML 配置文件 > 内置默认值**。
+
+配置文件默认在 `<data_root>/config.toml`，或用 `--config` / `REFLECT_MEM_CONFIG` 指定；
+模板见仓库根的 `reflect-mem.example.toml`：
+
+```toml
+data_root = "~/.agents/reflect-mem"
+
+[llm]
+endpoint = "https://api.minimaxi.com/v1"
+model = "MiniMax-M3"
+api_key = "sk-..."
+thinking = "disabled"            # 跳过 chain-of-thought；adaptive 保持开启
+
+[embedding]
+endpoint = "http://localhost:11434/api/embed"
+model = "qwen3-embedding:0.6b"   # 必须与历史数据一致，否则向量作废
+dimensions = 1024
+
+[mcp]
+transport = "stdio"              # 或 streamable-http
+bind = "127.0.0.1:8080"
+token = "..."                    # 设置后 HTTP 请求必须带 Bearer token
+```
+
+环境变量仍可用，且**优先级高于配置文件**（便于容器/CI 注入密钥）。
 
 ```bash
-# LLM（实体抽取 + recall 综合）
-LLM_PROVIDER=openai
 LLM_MODEL=openai/MiniMax-M2.7-highspeed
-LLM_ENDPOINT=https://api.minimaxi.com/v1
 LLM_API_KEY=...
-
-# 思考开关（MiniMax-M3 / M2.x）：disabled 跳过 chain-of-thought 直接回答（更快），
-# 省略或 adaptive 保持默认开启
 LLM_THINKING=disabled
-
-# Embedding（必须与历史数据一致，否则向量作废）
-EMBEDDING_PROVIDER=ollama
 EMBEDDING_MODEL=qwen3-embedding:0.6b
-EMBEDDING_ENDPOINT=http://host.docker.internal:11434/api/embed
-EMBEDDING_DIMENSIONS=1024
-
-# 数据根目录（默认复用旧数据目录）
 DATA_ROOT=~/.agents/reflect-mem
+MCP_TRANSPORT=streamable-http
+MCP_BIND=127.0.0.1:8080
+MCP_TOKEN=...
 ```
 
 ---
@@ -400,12 +415,12 @@ DATA_ROOT=~/.agents/reflect-mem
 | 4. recall | ✅ | `SUMMARIES` + `GRAPH_COMPLETION` 均已跑通（CLI） |
 | 5. remember | ✅ | 永久 ETL（会话快路径待做） |
 | 6. forget | ✅ | provenance 分区删除 + doctor 修复 |
-| 7. MCP 层 | 🟡 | rmcp + stdio ✅（recall/remember/forget）；streamable HTTP 待做 |
+| 7. MCP 层 | ✅ | rmcp：stdio + **streamable HTTP + Bearer 认证**；recall/remember/forget 全量暴露 |
 | 8. 切换 | ⬜ | 迁移 → Rust 独占 → Python 退役 |
 
 已落地模块：`config` / `storage::graph` / `storage::vector` / `migrate` / `embed` / `llm` / `recall` / `mcp`。
 
-**注意**：MCP 目前只暴露 `recall`（读路径）。`remember`/`forget`（写路径）**刻意未实现**——写必须逐字匹配旧服务的图/向量 schema，仓促实现会污染真实的 651MB 记忆库。
+**注意**：MCP 初期曾只暴露 `recall`（读路径），现已全量暴露 `remember` / `recall` / `forget`。写路径必须逐字匹配旧服务的图/向量 schema，否则会污染真实的记忆库。
 
 实测记录（2026-09-20）：
 

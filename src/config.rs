@@ -4,18 +4,15 @@
 //! source text, `reflect-mem.sqlite` (relational) and `reflect-mem.lancedb`
 //! (vectors) are read where they already are. Only the graph is migrated, into
 //! `reflect-mem.graph.sqlite` beside them.
+//!
+//! The root comes from [`crate::settings`] (config file, then `DATA_ROOT`, then
+//! `~/.agents/reflect-mem`).
 
 use std::path::PathBuf;
 
-/// Root of the memory data directory. Override with `DATA_ROOT`.
+/// Root of the memory data directory.
 pub fn data_root() -> PathBuf {
-    if let Ok(v) = std::env::var("DATA_ROOT")
-        && !v.trim().is_empty()
-    {
-        return PathBuf::from(v);
-    }
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".agents").join("reflect-mem")
+    crate::settings::get().data_root.clone()
 }
 
 /// `<root>/system/databases`

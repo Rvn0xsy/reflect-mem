@@ -66,6 +66,7 @@ fn bench_traverse(store: &GraphStore, seeds: &[String], hops: u32, reps: usize) 
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    reflect_mem::settings::init(None)?;
     let root = std::env::var("BENCH_ROOT").unwrap_or_else(|_| "/tmp/reflect-mem-bench".into());
     let graph_path = PathBuf::from(&root).join("reflect-mem.graph.sqlite");
     let lancedb_path = PathBuf::from(&root).join("reflect-mem.lancedb");
@@ -92,7 +93,7 @@ async fn main() -> Result<()> {
     }
 
     // ---- embedding (Ollama) ----
-    let embedder = EmbeddingClient::from_env()?;
+    let embedder = EmbeddingClient::from_settings()?;
     println!("\n-- embedding ({}) --", embedder.model());
     let q = "用户的博客地址、域名和技术栈是什么？";
     let _ = embedder.embed(q).await?; // warm up
