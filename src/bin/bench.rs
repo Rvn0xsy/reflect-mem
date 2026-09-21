@@ -40,7 +40,7 @@ fn bench_traverse(store: &GraphStore, seeds: &[String], hops: u32, reps: usize) 
     for _ in 0..reps {
         for seed in seeds {
             let t = Instant::now();
-            let _reached = store.traverse(&[seed.clone()], hops, None).unwrap();
+            let _reached = store.traverse(std::slice::from_ref(seed), hops, None).unwrap();
             lat.push(t.elapsed().as_secs_f64() * 1000.0);
         }
     }
@@ -48,7 +48,7 @@ fn bench_traverse(store: &GraphStore, seeds: &[String], hops: u32, reps: usize) 
     let mut nodes = 0usize;
     let mut edges = 0usize;
     for seed in seeds {
-        let reached = store.traverse(&[seed.clone()], hops, None).unwrap();
+        let reached = store.traverse(std::slice::from_ref(seed), hops, None).unwrap();
         nodes += reached.len();
         let ids: Vec<String> = reached.iter().map(|r| r.node.id.clone()).collect();
         edges += store.edges_within(&ids).unwrap().len();

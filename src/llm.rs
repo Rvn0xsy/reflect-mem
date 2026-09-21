@@ -17,6 +17,16 @@ fn env_or(key: &str, default: &str) -> String {
         .unwrap_or_else(|| default.to_string())
 }
 
+/// Map the `LLM_THINKING` value to a boolean. `disabled` / `off` / `false` /
+/// `none` turn thinking off; everything else (empty, `adaptive`, `on`, …)
+/// keeps the provider default.
+fn thinking_disabled(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "disabled" | "off" | "false" | "0" | "none"
+    )
+}
+
 /// litellm-style configs prefix the provider (`openai/MiniMax-M2.7-highspeed`);
 /// a raw OpenAI-compatible endpoint wants the bare model id.
 fn bare_model(model: &str) -> &str {
@@ -77,10 +87,16 @@ pub struct LlmClient {
     /// Extra request fields, merged from `LLM_ARGS` (e.g. MiniMax's
     /// `{"reasoning_split": true}`).
     extra_args: serde_json::Value,
+    /// When true, send `thinking: {"type": "disabled"}` so the model skips
+    /// chain-of-thought and answers directly.
+    disable_thinking: bool,
 }
 
 impl LlmClient {
-    /// Build from `LLM_ENDPOINT` / `LLM_MODEL` / `LLM_API_KEY` / `LLM_ARGS`.
+    /// Build from `LLM_ENDPOINT` / `LLM_MODEL` / `LLM_API_KEY` / `LLM_ARGS` /
+    /// `LLM_THINKING`. `LLM_THINKING=disabled` (also `off` / `false` / `none`)
+    /// turns chain-of-thought off; anything else keeps the provider default
+    /// (thinking on).
     pub fn from_env() -> Result<Self> {
         let base_url = env_or("LLM_ENDPOINT", DEFAULT_ENDPOINT);
         let model = env_or("LLM_MODEL", DEFAULT_MODEL);
@@ -94,11 +110,12 @@ impl LlmClient {
             .map(|v| serde_json::from_str(&v).context("LLM_ARGS must be a JSON object"))
             .transpose()?
             .unwrap_or_else(|| serde_json::json!({}));
-        Self::with_extra_args(base_url, model, api_key, extra_args)
+        let disable_thinking = thinking_disabled(&std::env::var("LLM_THINKING").unwrap_or_default());
+        Self::with_extra_args(base_url, model, api_key, extra_args, disable_thinking)
     }
 
     pub fn new(base_url: String, model: String, api_key: String) -> Result<Self> {
-        Self::with_extra_args(base_url, model, api_key, serde_json::json!({}))
+        Self::with_extra_args(base_url, model, api_key, serde_json::json!({}), false)
     }
 
     fn with_extra_args(
@@ -106,6 +123,7 @@ impl LlmClient {
         model: String,
         api_key: String,
         extra_args: serde_json::Value,
+        disable_thinking: bool,
     ) -> Result<Self> {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(300))
@@ -117,6 +135,7 @@ impl LlmClient {
             model,
             api_key,
             extra_args,
+            disable_thinking,
         })
     }
 
@@ -142,6 +161,9 @@ impl LlmClient {
             for (k, v) in extra {
                 body[k] = v.clone();
             }
+        }
+        if self.disable_thinking {
+            body["thinking"] = serde_json::json!({ "type": "disabled" });
         }
         let resp = self
             .http
@@ -213,5 +235,19 @@ mod tests {
             c.completions_url(),
             "https://api.minimaxi.com/v1/chat/completions"
         );
+    }
+
+    #[test]
+    fn thinking_flag_parses_off_values() {
+        for v in ["disabled", "off", "false", "0", "none", "  DISABLED "] {
+            assert!(thinking_disabled(v), "{v} should disable thinking");
+        }
+    }
+
+    #[test]
+    fn thinking_flag_keeps_default_on() {
+        for v in ["", "adaptive", "on", "true", "enabled", "garbage"] {
+            assert!(!thinking_disabled(v), "{v:?} should keep thinking on");
+        }
     }
 }
