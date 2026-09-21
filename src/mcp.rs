@@ -172,21 +172,24 @@ impl MemoryServer {
             StreamableHttpServerConfig::default(),
         );
 
-        let mut router = axum::Router::new().nest_service("/mcp", service);
-        match &token {
-            Some(t) => {
-                router = router.layer(axum::middleware::from_fn_with_state(
-                    BearerToken(t.clone()),
-                    require_bearer,
-                ));
-                eprintln!("reflect-mem MCP on http://{addr}/mcp (bearer token required)");
-            }
-            None => {
-                eprintln!(
-                    "reflect-mem MCP on http://{addr}/mcp (no auth — set mcp.token to require one)"
-                );
-            }
+        let mut mcp = axum::Router::new().nest_service("/mcp", service);
+        if let Some(t) = &token {
+            mcp = mcp.layer(axum::middleware::from_fn_with_state(
+                BearerToken(t.clone()),
+                require_bearer,
+            ));
+            eprintln!("reflect-mem MCP on http://{addr}/mcp (bearer token required)");
+        } else {
+            eprintln!(
+                "reflect-mem MCP on http://{addr}/mcp (no auth — set mcp.token to require one)"
+            );
         }
+
+        // `/healthz` stays outside the auth layer so container orchestrators can
+        // probe liveness without a token.
+        let router = axum::Router::new()
+            .route("/healthz", axum::routing::get(|| async { "ok" }))
+            .merge(mcp);
 
         axum::serve(listener, router)
             .await

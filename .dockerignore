@@ -1,0 +1,22 @@
+# Build output
+target/
+
+# Version control
+.git/
+.gitignore
+
+# Local secrets — .pi/mcp.json holds the LLM API key
+.pi/
+.env
+.env.*
+
+# Local data and scratch copies
+data/
+*.log
+
+# Docs and one-shot tooling are not needed inside the image
+docs/
+migration/
+skills/
+reflect-mem.example.toml
+*.md

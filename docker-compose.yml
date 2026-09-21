@@ -1,0 +1,51 @@
+# reflect-mem — streamable-HTTP MCP server.
+#
+#   cp .env.example .env   # then fill in LLM_API_KEY and MCP_TOKEN
+#   docker compose up -d
+#   docker compose logs -f
+#
+# The endpoint is http://127.0.0.1:8080/mcp and requires
+# `Authorization: Bearer $MCP_TOKEN`. Liveness probe: GET /healthz.
+
+name: reflect-mem
+
+services:
+  reflect-mem:
+    build:
+      context: .
+    image: reflect-mem:local
+    container_name: reflect-mem
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATA_ROOT: /data
+      MCP_BIND: 0.0.0.0:8080
+    ports:
+      # Bound to loopback on the host by default; change the left side only if
+      # you really mean to expose it.
+      - "127.0.0.1:${MCP_HOST_PORT:-8080}:8080"
+    volumes:
+      # Point DATA_DIR at an existing store (e.g. /Users/you/.agents/reflect-mem)
+      # to reuse it, or leave it unset for a fresh ./data directory.
+      - ${DATA_DIR:-./data}:/data
+    # Reaches an Ollama running on the host. Docker Desktop provides this
+    # automatically; on Linux it needs the explicit host-gateway mapping.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Optional bundled Ollama for embeddings:
+  #   docker compose --profile ollama up -d
+  #   docker compose exec ollama ollama pull qwen3-embedding:0.6b
+  # then set EMBEDDING_ENDPOINT=http://ollama:11434/api/embed in .env.
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+
+volumes:
+  ollama:

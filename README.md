@@ -40,6 +40,8 @@ the 520 MB `reflect-mem.lancedb` vector store are all opened **in place**, byte-
   idempotent and deduplicated.
 - **Config file + two transports.** One TOML file (env vars override it) drives everything, and the MCP
   server speaks **stdio** or **streamable HTTP** with optional bearer-token auth.
+- **Ships as a container.** Multi-stage `Dockerfile` (non-root, healthcheck) plus a `docker-compose.yml`
+  that starts a token-protected HTTP endpoint in one command.
 
 ---
 
@@ -172,6 +174,48 @@ reflect-mem forget --dataset main_dataset
 
 ---
 
+## Docker
+
+The image runs the HTTP transport behind a bearer token, as a non-root user with a `/healthz` probe —
+see [`Dockerfile`](Dockerfile) and [`docker-compose.yml`](docker-compose.yml).
+
+```bash
+cp .env.example .env          # then set LLM_API_KEY and MCP_TOKEN
+# point DATA_DIR at an existing store (defaults to a fresh ./data)
+docker compose up -d
+docker compose logs -f
+```
+
+The endpoint is `http://127.0.0.1:8080/mcp`:
+
+```bash
+curl -X POST http://127.0.0.1:8080/mcp \
+  -H 'Authorization: Bearer '"$MCP_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+| | |
+|---|---|
+| Data | `DATA_DIR` (host) → `/data` (container). In the image `DATA_ROOT=/data`, so `config.toml` lives at `/data/config.toml`. |
+| Auth | `MCP_TOKEN` is required; requests without it get `401`. `GET /healthz` stays open for probes. |
+| Embeddings | Defaults to `host.docker.internal:11434` (an Ollama on the host). Or bundle one: `docker compose --profile ollama up -d`. |
+| Port | Published on host loopback only (`127.0.0.1:${MCP_HOST_PORT}:8080`) — change deliberately. |
+
+> The container runs as uid `10001` and needs **write** access to `DATA_DIR` (SQLite WAL, LanceDB).
+> If it cannot write, add `user: "$(id -u):$(id -g)"` to the compose service.
+
+Run without compose:
+
+```bash
+docker build -t reflect-mem .
+docker run --rm -p 127.0.0.1:8080:8080 -v "$HOME/.agents/reflect-mem:/data" \
+  -e LLM_API_KEY=... -e MCP_TOKEN=... reflect-mem
+```
+
+---
+
 ## CLI reference
 
 | Command | Description |
@@ -299,7 +343,9 @@ src/
 docs/           design
 migration/      one-shot graph migration tooling
 skills/         operator skill for the AI agent
-reflect-mem.example.toml   annotated config template
+reflect-mem.example.toml      annotated config template
+Dockerfile / .dockerignore    container image
+.env.example / docker-compose.yml   compose deployment
 ```
 
 ## Acknowledgements

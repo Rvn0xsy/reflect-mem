@@ -3,3 +3,5 @@
 .pi/
 # local config (holds the LLM API key)
 config.toml
+.env
+
