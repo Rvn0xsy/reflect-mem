@@ -340,6 +340,10 @@ LLM_MODEL=openai/MiniMax-M2.7-highspeed
 LLM_ENDPOINT=https://api.minimaxi.com/v1
 LLM_API_KEY=...
 
+# 思考开关（MiniMax-M3 / M2.x）：disabled 跳过 chain-of-thought 直接回答（更快），
+# 省略或 adaptive 保持默认开启
+LLM_THINKING=disabled
+
 # Embedding（必须与历史数据一致，否则向量作废）
 EMBEDDING_PROVIDER=ollama
 EMBEDDING_MODEL=qwen3-embedding:0.6b
