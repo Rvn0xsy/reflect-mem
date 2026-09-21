@@ -4,6 +4,8 @@
 
 **Long-term memory for AI agents — a single Rust binary that serves `remember` / `recall` / `forget` over MCP.**
 
+[![CI](https://github.com/Rvn0xsy/reflect-mem/actions/workflows/ci.yml/badge.svg)](https://github.com/Rvn0xsy/reflect-mem/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/Rvn0xsy/reflect-mem?sort=semver)](https://github.com/Rvn0xsy/reflect-mem/releases)
 [![Rust 1.96](https://img.shields.io/badge/rust-1.96-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![edition 2024](https://img.shields.io/badge/edition-2024-orange)]()
 [![MCP](https://img.shields.io/badge/MCP-ready-blue)]()
@@ -79,14 +81,35 @@ itself.
 
 ## Quick start
 
-### 1. Build
+### 1. Install
+
+**Prebuilt binary** — Linux x86_64, macOS arm64/x86_64:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Rvn0xsy/reflect-mem/main/install.sh | sh
+```
+
+Or fetch the archive directly (a `.sha256` is published next to each one):
+
+```bash
+# macOS (Apple Silicon) / (Intel)
+curl -fsSL https://github.com/Rvn0xsy/reflect-mem/releases/latest/download/reflect-mem-aarch64-apple-darwin.tar.gz | tar xz
+curl -fsSL https://github.com/Rvn0xsy/reflect-mem/releases/latest/download/reflect-mem-x86_64-apple-darwin.tar.gz | tar xz
+sudo install -m 0755 reflect-mem /usr/local/bin/   # + LICENSE, NOTICE
+
+# Linux (x86_64)
+curl -fsSL https://github.com/Rvn0xsy/reflect-mem/releases/latest/download/reflect-mem-x86_64-unknown-linux-gnu.tar.gz | tar xz
+sudo install -m 0755 reflect-mem /usr/local/bin/
+```
+
+Pin a version with `| sh -s -- v0.0.1`, or set `INSTALL_DIR=~/.local/bin`.
+
+**From source** — any platform, needs a recent stable Rust (`edition 2024`):
 
 ```bash
 cargo build --release
 # binary at target/release/reflect-mem
 ```
-
-Requires a recent stable Rust (`edition 2024`).
 
 ### 2. Configure
 

@@ -4,6 +4,8 @@
 
 **给 AI Agent 的长期记忆 —— 一个 Rust 单二进制，通过 MCP 提供 `remember` / `recall` / `forget`。**
 
+[![CI](https://github.com/Rvn0xsy/reflect-mem/actions/workflows/ci.yml/badge.svg)](https://github.com/Rvn0xsy/reflect-mem/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/Rvn0xsy/reflect-mem?sort=semver)](https://github.com/Rvn0xsy/reflect-mem/releases)
 [![Rust 1.96](https://img.shields.io/badge/rust-1.96-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![edition 2024](https://img.shields.io/badge/edition-2024-orange)]()
 [![MCP](https://img.shields.io/badge/MCP-ready-blue)]()
@@ -76,14 +78,35 @@
 
 ## 快速开始
 
-### 1. 构建
+### 1. 安装
+
+**预编译二进制** —— Linux x86_64、macOS arm64/x86_64：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Rvn0xsy/reflect-mem/main/install.sh | sh
+```
+
+或者自己下载压缩包（每个包旁边都发布了 `.sha256` 校验文件）：
+
+```bash
+# macOS（Apple Silicon / Intel）
+curl -fsSL https://github.com/Rvn0xsy/reflect-mem/releases/latest/download/reflect-mem-aarch64-apple-darwin.tar.gz | tar xz
+curl -fsSL https://github.com/Rvn0xsy/reflect-mem/releases/latest/download/reflect-mem-x86_64-apple-darwin.tar.gz | tar xz
+sudo install -m 0755 reflect-mem /usr/local/bin/   # 包内还有 LICENSE、NOTICE
+
+# Linux（x86_64）
+curl -fsSL https://github.com/Rvn0xsy/reflect-mem/releases/latest/download/reflect-mem-x86_64-unknown-linux-gnu.tar.gz | tar xz
+sudo install -m 0755 reflect-mem /usr/local/bin/
+```
+
+指定版本用 `| sh -s -- v0.0.1`，自定义目录用 `INSTALL_DIR=~/.local/bin`。
+
+**从源码构建** —— 任意平台，需要较新的稳定版 Rust（`edition 2024`）：
 
 ```bash
 cargo build --release
 # 产物：target/release/reflect-mem
 ```
-
-需要较新的稳定版 Rust（`edition 2024`）。
 
 ### 2. 配置
 

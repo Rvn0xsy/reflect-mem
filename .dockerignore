@@ -1,6 +1,9 @@
 # Build output
 target/
 
+# CI
+.github/
+
 # Version control
 .git/
 .gitignore

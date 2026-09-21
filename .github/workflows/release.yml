@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN: reflect-mem
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          # Cross-compiled from the arm64 runner (the Apple SDK ships both archs).
+          - os: macos-latest
+            target: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # lance-encoding's build script generates protobuf bindings.
+      - name: Install protoc (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --bin "$BIN" --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          dist="dist"
+          rm -rf "$dist" && mkdir -p "$dist"
+          cp "target/${{ matrix.target }}/release/$BIN" "$dist/"
+          cp LICENSE NOTICE "$dist/"
+          # No version in the asset name so /releases/latest/download/ resolves.
+          name="$BIN-${{ matrix.target }}"
+          tar -C "$dist" -czf "$name.tar.gz" .
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+          else
+            shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+          fi
+          ls -l "$name.tar.gz"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            reflect-mem-*.tar.gz
+            reflect-mem-*.tar.gz.sha256
+          generate_release_notes: true
+          draft: false
