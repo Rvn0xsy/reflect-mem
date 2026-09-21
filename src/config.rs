@@ -4,6 +4,9 @@
 //! place: source text, `cognee_db` (relational) and `cognee.lancedb` (vectors)
 //! are read where they already are. Only the graph is migrated, into a new
 //! `graph.sqlite` that sits beside them.
+//!
+//! The root was renamed from `~/.agents/cognee-memory` to `~/.agents/reflect-mem`
+//! on 2026-09-20; the default below tracks the new location.
 
 use std::path::PathBuf;
 
@@ -15,7 +18,7 @@ pub fn data_root() -> PathBuf {
         return PathBuf::from(v);
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".agents").join("cognee-memory")
+    PathBuf::from(home).join(".agents").join("reflect-mem")
 }
 
 /// `<root>/system/databases`

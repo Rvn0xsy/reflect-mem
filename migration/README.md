@@ -17,7 +17,7 @@ pip install -r requirements.txt          # ladybug==0.19.0，与 cognee 钉的�
 python dump_graph.py --out ./out
 ```
 
-默认从 `~/.agents/cognee-memory/system/databases/cognee_graph_ladybug` 读，可用 `--graph` 覆盖。
+默认从 `~/.agents/reflect-mem/system/databases/cognee_graph_ladybug` 读，可用 `--graph` 覆盖。
 
 ## 安全
 
@@ -40,7 +40,7 @@ python dump_graph.py --out ./out
 导入：
 
 ```bash
-reflect-mem migrate --input migration/out --graph ~/.agents/cognee-memory/system/databases/graph.sqlite
+reflect-mem migrate --input migration/out --graph ~/.agents/reflect-mem/system/databases/graph.sqlite
 ```
 
 导入按 `summary.json` 对账节点/边计数，不一致即报错。

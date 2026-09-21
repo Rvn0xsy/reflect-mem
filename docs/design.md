@@ -75,7 +75,7 @@
 
 ### 4.1 现状数据清单（实测）
 
-数据根目录：`~/.agents/cognee-memory/`（可配置）
+数据根目录：`~/.agents/reflect-mem/`（可配置；2026-09-20 由 `~/.agents/cognee-memory/` 改名而来）
 
 | 路径 | 格式 | 大小 | 角色 | 复用策略 |
 |------|------|------|------|----------|
@@ -347,7 +347,7 @@ EMBEDDING_ENDPOINT=http://host.docker.internal:11434/api/embed
 EMBEDDING_DIMENSIONS=1024
 
 # 数据根目录（默认复用旧数据目录）
-DATA_ROOT=~/.agents/cognee-memory
+DATA_ROOT=~/.agents/reflect-mem
 ```
 
 ---
@@ -415,7 +415,7 @@ DATA_ROOT=~/.agents/cognee-memory
 - `tools/list` 返回 `recall` 工具。
 - `tools/call recall {search_type: GRAPH_COMPLETION}` 返回正确的多跳答案。
 
-`graph.sqlite` 已迁移到正式位置：`~/.agents/cognee-memory/system/databases/graph.sqlite`（新增文件，不触碰 cognee 原有任何文件）。
+`graph.sqlite` 已迁移到正式位置：`~/.agents/reflect-mem/system/databases/graph.sqlite`（新增文件，不触碰 cognee 原有任何文件）。
 
 ### 13.2 写路径规格（已从 cognee 源码 + 真实数据双重验证）
 

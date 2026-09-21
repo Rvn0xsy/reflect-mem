@@ -14,7 +14,7 @@ use lancedb::query::{ExecutableQuery, QueryBase};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_root = std::env::var("DATA_ROOT").unwrap_or_else(|_| {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        format!("{home}/.agents/cognee-memory")
+        format!("{home}/.agents/reflect-mem")
     });
     let db_path = PathBuf::from(&data_root).join("system/databases/cognee.lancedb");
     println!("Opening LanceDB at: {}", db_path.display());
