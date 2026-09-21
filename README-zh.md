@@ -313,12 +313,10 @@ BENCH_ROOT=/tmp/reflect-mem-bench cargo run --release --bin bench
 
 ---
 
-## 架构与文档
+## 文档
 
-- [`docs/design.md`](docs/design.md) —— 完整设计：决策、存储 schema、ETL 规格、迁移、风险。
 - [`skills/reflect-mem-memory/SKILL.md`](skills/reflect-mem-memory/SKILL.md) —— 给使用这些工具的
   AI Agent 看的操作说明（remember / recall / forget 语义）。
-- [`migration/`](migration/README.md) —— 一次性的 `LBUG+` → JSONL 图导出（Python，跑一次即弃）。
 
 ## 项目结构
 
@@ -337,8 +335,6 @@ src/
   config.rs     数据根目录路径布局
   storage/      图 / 向量 / 关系层 / 会话缓存
   ingest/       切块 + 实体抽取
-docs/           设计文档
-migration/      一次性图迁移工具
 skills/         给 AI Agent 的操作 skill
 reflect-mem.example.toml      带注释的配置模板
 Dockerfile / .dockerignore    容器镜像

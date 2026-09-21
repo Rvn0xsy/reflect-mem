@@ -5,3 +5,6 @@
 config.toml
 .env
 
+# internal docs — not published
+docs/
+migration/

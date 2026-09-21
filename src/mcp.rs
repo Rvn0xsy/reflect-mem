@@ -2,8 +2,7 @@
 //!
 //! Exposes the memory API over MCP: `remember` / `recall` / `forget`. Writing
 //! must reproduce the graph/vector schema exactly or it would corrupt the
-//! store, so the write path stays schema-faithful to the migrated data. See
-//! `docs/design.md`.
+//! store, so the write path stays schema-faithful to the migrated data.
 
 use std::sync::Arc;
 

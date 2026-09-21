@@ -1,6 +1,9 @@
-//! Import a dumped graph (`migration/out/*.jsonl`) into `reflect-mem.graph.sqlite`.
+//! Import a dumped graph (`nodes.jsonl` / `edges.jsonl`) into
+//! `reflect-mem.graph.sqlite`.
 //!
-//! Companion to `migration/dump_graph.py`. See `docs/design.md` §9.
+//! The dump is produced by an external exporter (the graph store is a private
+//! `LBUG+` format that this binary cannot read); see `reflect-mem migrate
+//! --help` for the expected input layout.
 
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -75,7 +78,7 @@ pub fn import(input_dir: &Path, graph_path: &Path) -> Result<ImportReport> {
 
     if !nodes_path.exists() {
         bail!(
-            "{} not found — run migration/dump_graph.py first",
+            "{} not found — expected a JSONL graph dump in this directory",
             nodes_path.display()
         );
     }

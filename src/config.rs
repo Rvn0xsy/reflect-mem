@@ -1,9 +1,8 @@
 //! Data-root layout.
 //!
-//! By design (`docs/design.md` §4.2) we reuse the existing data root in place:
-//! source text, `reflect-mem.sqlite` (relational) and `reflect-mem.lancedb`
-//! (vectors) are read where they already are. Only the graph is migrated, into
-//! `reflect-mem.graph.sqlite` beside them.
+//! We reuse the existing data root in place: source text, `reflect-mem.sqlite`
+//! (relational) and `reflect-mem.lancedb` (vectors) are read where they already
+//! are. Only the graph is migrated, into `reflect-mem.graph.sqlite` beside them.
 //!
 //! The root comes from [`crate::settings`] (config file, then `DATA_ROOT`, then
 //! `~/.agents/reflect-mem`).

@@ -26,10 +26,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Import a dumped graph (migration/out/*.jsonl) into reflect-mem.graph.sqlite.
+    /// Import a dumped graph (nodes.jsonl / edges.jsonl) into reflect-mem.graph.sqlite.
     Migrate {
         /// Directory holding nodes.jsonl / edges.jsonl / metadata.jsonl.
-        #[arg(long, default_value = "./migration/out")]
+        #[arg(long, default_value = "./dump")]
         input: PathBuf,
         /// Target graph db. Defaults to <DATA_ROOT>/system/databases/reflect-mem.graph.sqlite.
         #[arg(long)]
@@ -98,10 +98,10 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         everything: bool,
     },
-    /// Verify and repair store consistency (needs a migration dump to restore).
+    /// Verify and repair store consistency (needs a graph dump to restore).
     Doctor {
-        /// Directory with nodes.jsonl (the migration dump) to restore from.
-        #[arg(long, default_value = "./migration/out")]
+        /// Directory with nodes.jsonl (the graph dump) to restore from.
+        #[arg(long, default_value = "./dump")]
         dump: PathBuf,
         #[arg(long, default_value_t = false)]
         heal_vectors: bool,

@@ -318,12 +318,10 @@ BENCH_ROOT=/tmp/reflect-mem-bench cargo run --release --bin bench
 
 ---
 
-## Architecture & docs
+## Documentation
 
-- [`docs/design.md`](docs/design.md) — full design: decisions, storage schema, ETL spec, migration, risks.
 - [`skills/reflect-mem-memory/SKILL.md`](skills/reflect-mem-memory/SKILL.md) — operator guide for the AI
   agent using these tools (remember / recall / forget semantics).
-- [`migration/`](migration/README.md) — one-shot `LBUG+` → JSONL graph dump (Python, run-once).
 
 ## Project layout
 
@@ -342,8 +340,6 @@ src/
   config.rs     data-root path layout
   storage/      graph / vector / relational / session-cache
   ingest/       chunking + entity extraction
-docs/           design
-migration/      one-shot graph migration tooling
 skills/         operator skill for the AI agent
 reflect-mem.example.toml      annotated config template
 Dockerfile / .dockerignore    container image

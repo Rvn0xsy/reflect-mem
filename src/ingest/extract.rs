@@ -1,5 +1,5 @@
 //! LLM extraction and summarization, using the original prompts and response
-//! schemas (see `docs/design.md` §13.2).
+//! schemas.
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;

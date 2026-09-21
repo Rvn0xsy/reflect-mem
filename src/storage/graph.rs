@@ -3,8 +3,6 @@
 //! Schema mirrors the ladybug `Node` / `EDGE` tables 1:1 so the migration is a
 //! straight copy, and K-hop traversal (what `GRAPH_COMPLETION` needs) is a
 //! recursive CTE over `graph_edges`.
-//!
-//! See `docs/design.md` §4.3.
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
