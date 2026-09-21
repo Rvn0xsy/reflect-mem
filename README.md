@@ -1,95 +1,250 @@
+<div align="center">
+
 # reflect-mem
 
-用 Rust 重写 cognee 的记忆管理 MCP 服务，产出**单一静态二进制**，彻底移除 Python 运行时，复用现有记忆数据。
+**Long-term memory for AI agents — a single Rust binary that reimplements cognee's memory MCP.**
 
-- 完整设计见 [`docs/design.md`](docs/design.md)
-- 面向使用者的记忆工具说明见 [`skills/reflect-mem-memory/SKILL.md`](skills/reflect-mem-memory/SKILL.md)
+[![Rust 1.96](https://img.shields.io/badge/rust-1.96-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![edition 2024](https://img.shields.io/badge/edition-2024-orange)]()
+[![MCP](https://img.shields.io/badge/MCP-ready-blue)]()
+[![SQLite](https://img.shields.io/badge/SQLite-graph%2Frelational-003B57?logo=sqlite&logoColor=white)]()
+[![LanceDB](https://img.shields.io/badge/LanceDB-vectors-8A2BE2)]()
+[![version 0.1.0](https://img.shields.io/badge/version-0.1.0-lightgrey)]()
 
-## 它是什么
+</div>
 
-`reflect-mem` 是一个长期记忆 MCP 服务，通过 `rmcp` 暴露 `remember` / `recall` / `forget` 三个工具，让 AI 助手能跨会话存取用户说过的事实。底层是 Rust 原生实现，替代了此前的 Python `cognee-mcp`。
+`reflect-mem` is a Rust reimplementation of [cognee](https://www.cognee.ai)'s memory-management MCP
+server. It exposes `remember` / `recall` / `forget` over the Model Context Protocol so an AI agent can
+store and retrieve facts that survive across conversations — **without a Python runtime, a venv, or a
+Kuzu C++ dependency**.
 
-对外只依赖 HTTP（MiniMax LLM + Ollama embedding），存储全部走 Rust 原生库或 bundled SQLite，因此可以打成单一二进制，无 Python 运行时。
+It drops in on top of an existing cognee memory store: source text, the `cognee_db` relational layer and
+the 520 MB `cognee.lancedb` vector store are all opened **in place**, byte-for-byte. Only the private
+`LBUG+` graph is migrated, into a SQLite property graph.
 
-## 当前状态
+---
 
-| 模块 | 状态 |
-|------|------|
-| 图迁移（`LBUG+` → SQLite 属性图） | ✅ 已完成并对账 |
-| 存储层（图 / 向量 / 关系层 / 会话） | ✅ 图与向量；关系层已接 |
-| `recall`（SUMMARIES + GRAPH_COMPLETION） | ✅ 端到端跑通 |
-| `remember`（永久记忆 ETL） | ✅ 已实现 |
-| `forget`（跨库删除 + provenance 分区） | ✅ 已实现 |
-| `doctor`（一致性校验与修复） | ✅ 已实现 |
-| MCP 层 | 🟡 stdio 已通，streamable HTTP 待做 |
+## Features
 
-## 构建
+- **Single static binary.** No Python, no system OpenSSL (`rustls`), no Kuzu linkage. Every storage
+  engine is either Rust-native or bundled SQLite.
+- **In-place data reuse.** Reuses `data/text_*.txt`, `cognee_db`, and `cognee.lancedb` exactly as cognee
+  left them — the embedding model is unchanged (`qwen3-embedding:0.6b`, 1024-dim), so existing vectors
+  stay valid.
+- **Sub-millisecond graph traversal.** `GRAPH_COMPLETION`'s K-hop expansion runs as a SQLite recursive
+  CTE over ~6.3k nodes / ~18.5k edges and returns in **tens of microseconds** (see [Benchmark](#benchmark)).
+- **Two retrieval modes.** `SUMMARIES` (fast vector search over hierarchical summaries) and
+  `GRAPH_COMPLETION` (multi-hop reasoning over the knowledge graph).
+- **Three memory tools.** `remember` (permanent ETL or session fast-path), `recall`, `forget`
+  (provenance-scoped, cross-store deletion), plus `doctor` for consistency repair.
+- **Deterministic IDs.** Entities, types and edges are `uuid5`-derived, so re-ingesting the same facts is
+  idempotent and deduplicated.
+
+---
+
+## How it works
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                     reflect-mem (Rust)                       │
+│                                                              │
+│   MCP layer (rmcp)  ·  remember / recall / forget            │
+│   transports: stdio                                            │
+│  ─────────────────────────────────────────────────────────── │
+│   recall     SUMMARIES ──────────► LanceDB vector search      │
+│              GRAPH_COMPLETION ──► vectors → SQLite K-hop CTE │
+│   remember   chunk → MiniMax extraction → graph + vectors    │
+│   forget     cross-store, provenance-scoped                   │
+│  ─────────────────────────────────────────────────────────── │
+│   SQLite   graph · relational · session-cache                 │
+│   LanceDB  vectors (reused in place)                          │
+└───────────────────────────────┬──────────────────────────────┘
+                                │ HTTP only
+                     ┌──────────┴───────────┐
+                     │ MiniMax LLM          │  entity extraction + synthesis
+                     │ Ollama embedding     │  qwen3-embedding:0.6b (1024d)
+                     └──────────────────────┘
+```
+
+All external dependencies are plain HTTP. Nothing on the host needs to be installed beyond the binary
+itself.
+
+---
+
+## Quick start
+
+### 1. Build
 
 ```bash
 cargo build --release
-# 产物 target/release/reflect-mem
+# binary at target/release/reflect-mem
 ```
 
-## CLI 子命令
+Requires a recent stable Rust (`edition 2024`).
 
-| 命令 | 说明 |
-|------|------|
-| `migrate --input <dir>` | 导入迁移 dump（`nodes.jsonl` / `edges.jsonl`）到 `graph.sqlite` |
-| `inspect` | 打印图的节点/边计数与类型直方图 |
-| `traverse <id> --hops N` | 展示某节点的 K 跳邻域（GRAPH_COMPLETION 的图半边） |
-| `vectors` | 列出复用的 LanceDB 向量表及行数 |
-| `recall <query> --search-type SUMMARIES\|GRAPH_COMPLETION` | 查记忆并综合答案 |
-| `remember --data <text>` | 存永久记忆（实体抽取 + 写图/向量） |
-| `forget --data-id <uuid> \| --dataset <name> \| --everything` | 删记忆 |
-| `doctor --dump <dir> [--heal-vectors]` | 校验并修复存储一致性 |
-| `mcp --transport stdio` | 以 MCP 协议提供服务 |
-
-## 配置
-
-环境变量（对齐 Python 版命名）：
+### 2. Configure
 
 ```bash
-# LLM（实体抽取 + recall 综合）
-LLM_PROVIDER=openai
-LLM_MODEL=openai/MiniMax-M2.7-highspeed
-LLM_ENDPOINT=https://api.minimaxi.com/v1
-LLM_API_KEY=...
+export LLM_ENDPOINT=https://api.minimaxi.com/v1
+export LLM_MODEL=MiniMax-M3            # or MiniMax-M2.7-highspeed
+export LLM_API_KEY=...
+export LLM_THINKING=disabled           # skip chain-of-thought (faster); omit to keep thinking on
 
-# 思考开关（MiniMax-M3 / M2.x）：disabled 跳过 chain-of-thought 直接回答（更快），
-# 省略或 adaptive 保持默认开启
-LLM_THINKING=disabled
+export EMBEDDING_ENDPOINT=http://localhost:11434/api/embed
+export EMBEDDING_MODEL=qwen3-embedding:0.6b
+export EMBEDDING_DIMENSIONS=1024
 
-# Embedding（必须与历史数据一致，否则向量作废）
-EMBEDDING_PROVIDER=ollama
-EMBEDDING_MODEL=qwen3-embedding:0.6b
-EMBEDDING_ENDPOINT=http://host.docker.internal:11434/api/embed
-EMBEDDING_DIMENSIONS=1024
-
-# 数据根目录（默认复用旧数据目录）
-DATA_ROOT=~/.agents/reflect-mem
+export DATA_ROOT=~/.agents/reflect-mem
 ```
 
-## 目录结构
+> `EMBEDDING_MODEL` **must** match the model that produced the existing vectors, or the reused
+> `cognee.lancedb` becomes unusable.
+
+### 3. Serve over MCP
+
+```bash
+reflect-mem mcp --transport stdio
+```
+
+Register it in your MCP client:
+
+```json
+{
+  "mcpServers": {
+    "reflect-mem": {
+      "transport": "stdio",
+      "command": "/path/to/reflect-mem",
+      "args": ["mcp", "--transport", "stdio"],
+      "env": { "DATA_ROOT": "~/.agents/reflect-mem", "LLM_MODEL": "MiniMax-M3" }
+    }
+  }
+}
+```
+
+### 4. Try the CLI
+
+```bash
+reflect-mem recall "what did I say about my blog?" --search-type SUMMARIES
+reflect-mem recall "what did I say about my blog?" --search-type GRAPH_COMPLETION --hops 2
+reflect-mem remember --data "用户的博客主站是 blog.example.com。"
+reflect-mem forget --dataset main_dataset
+```
+
+---
+
+## CLI reference
+
+| Command | Description |
+|---------|-------------|
+| `migrate --input <dir>` | Import a graph dump (`nodes.jsonl` / `edges.jsonl`) into `graph.sqlite` |
+| `inspect` | Node/edge counts and type histograms |
+| `traverse <id> --hops N` | Print the K-hop neighbourhood of a node |
+| `vectors` | List reused LanceDB tables and row counts |
+| `recall <query>` | Search memory and synthesise an answer (`--search-type`, `--top-k`, `--hops`) |
+| `remember --data <text>` | Store permanent memory (extract entities, write graph + vectors) |
+| `forget --data-id <uuid>` \| `--dataset <name>` \| `--everything` | Delete memory |
+| `doctor --dump <dir> [--heal-vectors]` | Verify and repair store consistency |
+| `mcp --transport stdio` | Serve the memory API over MCP |
+
+---
+
+## Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LLM_ENDPOINT` | `https://api.minimaxi.com/v1` | OpenAI-compatible chat-completions endpoint |
+| `LLM_MODEL` | `MiniMax-M2.7-highspeed` | Model id (an `openai/` prefix is stripped) |
+| `LLM_API_KEY` | — | Required |
+| `LLM_ARGS` | `{}` | Extra request fields (e.g. `{"reasoning_split": true}`) |
+| `LLM_THINKING` | *(unset)* | `disabled` skips MiniMax chain-of-thought; omit or `adaptive` keeps it on |
+| `EMBEDDING_ENDPOINT` | `http://localhost:11434/api/embed` | Ollama embed endpoint (`host.docker.internal` is auto-rewritten to `localhost` outside Docker) |
+| `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | Must match historical data |
+| `EMBEDDING_DIMENSIONS` | `1024` | Must match historical data |
+| `DATA_ROOT` | `~/.agents/reflect-mem` | Data root (`system/databases/…` underneath) |
+
+---
+
+## Benchmark
+
+Measured on a release build against a real memory store (**6,365 nodes / 18,479 edges**, 524 MB LanceDB),
+copied to `/tmp` so the live store is never touched. Local storage and graph numbers exclude process
+startup; end-to-end numbers include the full pipeline (embedding → retrieval → LLM synthesis).
+
+### Graph traversal (pure local, SQLite recursive CTE)
+
+50 entity seeds × 3 rounds, `GRAPH_COMPLETION`'s graph half:
+
+| hops | mean | p50 | p95 | p99 | avg. nodes | avg. edges |
+|------|------|-----|-----|-----|-----------|-----------|
+| 1 | **0.08 ms** | 0.02 ms | 0.25 ms | 0.30 ms | 2.8 | 1.9 |
+| 2 | **0.05 ms** | 0.03 ms | 0.14 ms | 0.46 ms | 5.6 | 6.0 |
+| 3 | **0.06 ms** | 0.03 ms | 0.26 ms | 0.47 ms | 10.8 | 16.0 |
+
+K-hop traversal is **sub-millisecond** — the SQLite graph is not the bottleneck.
+
+### Vector search (LanceDB, k=5, 20 rounds)
+
+| Table | Rows | mean |
+|-------|------|------|
+| `Entity_name` | 5,125 | **13.5 ms** |
+| `TextSummary_text` | 274 | **5.3 ms** |
+| `DocumentChunk_text` | 274 | **4.9 ms** |
+
+Embedding (`qwen3-embedding:0.6b`, 1024-dim): **15.4 ms** mean.
+
+### End-to-end recall (real MiniMax LLM)
+
+| Scenario | thinking on | thinking off | |
+|----------|-------------|--------------|--|
+| `SUMMARIES` | 2.75 s | **2.28 s** | −17% |
+| `GRAPH_COMPLETION` | 3.26 s | **2.55 s** | −22% |
+
+The dominant cost is LLM generation; local storage + graph + vectors together stay under ~20 ms.
+`LLM_THINKING=disabled` shaves 17–22% off end-to-end latency with no measurable answer-quality loss.
+
+### Reproduce
+
+```bash
+# 1. isolate a copy of the data (never touch the live store)
+cp -R ~/.agents/reflect-mem/system/databases/graph.sqlite /tmp/reflect-mem-bench/
+cp -R ~/.agents/reflect-mem/system/databases/cognee.lancedb /tmp/reflect-mem-bench/
+
+# 2. run the local hot-path harness (graph + embedding + vector search)
+BENCH_ROOT=/tmp/reflect-mem-bench cargo run --release --bin bench
+
+# 3. end-to-end recall is measured via the CLI (needs LLM + Ollama)
+```
+
+---
+
+## Architecture & docs
+
+- [`docs/design.md`](docs/design.md) — full design: decisions, storage schema, ETL spec, migration, risks.
+- [`skills/reflect-mem-memory/SKILL.md`](skills/reflect-mem-memory/SKILL.md) — operator guide for the AI
+  agent using these tools (remember / recall / forget semantics).
+- [`migration/`](migration/README.md) — one-shot `LBUG+` → JSONL graph dump (Python, run-once).
+
+## Project layout
 
 ```
 src/
-  main.rs       CLI 入口
-  mcp.rs        rmcp 服务 + 工具注册
-  recall.rs     读取管线（SUMMARIES / GRAPH_COMPLETION）
-  remember.rs   写入管线（永久记忆 ETL）
-  forget.rs     跨库删除
-  doctor.rs     一致性校验与修复
-  migrate.rs    图迁移导入器
-  llm.rs        MiniMax 客户端（OpenAI 兼容）
-  embed.rs      Ollama embedding 客户端
-  config.rs     环境变量与路径
-  storage/      图 / 向量 / 关系层 / 会话缓存
-  ingest/       chunk + 实体抽取
-docs/design.md      设计文档（决策与架构）
-migration/           一次性图迁移工具（Python，跑完即弃）
-skills/reflect-mem-memory/   AI 助手的记忆工具使用说明（skill）
+  main.rs       CLI entry point
+  mcp.rs        rmcp server + tool registration
+  recall.rs     read path (SUMMARIES / GRAPH_COMPLETION)
+  remember.rs   write path (permanent-memory ETL)
+  forget.rs     cross-store deletion
+  doctor.rs     consistency check & repair
+  migrate.rs    graph-dump importer
+  llm.rs        MiniMax client (OpenAI-compatible)
+  embed.rs      Ollama embedding client
+  config.rs     env + path resolution
+  storage/      graph / vector / relational / session-cache
+  ingest/       chunking + entity extraction
+docs/           design
+migration/      one-shot graph migration tooling
+skills/         operator skill for the AI agent
 ```
 
-## 维护 skill
+## License
 
-`skills/reflect-mem-memory/SKILL.md` 是给使用本服务的 AI 助手看的操作说明，随项目一起维护。改完它之后，需要同步到助手的 skill 目录（`~/.agents/skills/reflect-mem-memory/`）才会生效。
+Not yet licensed. All rights reserved until a license is chosen.
