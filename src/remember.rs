@@ -117,9 +117,14 @@ pub async fn remember(
     // 1. idempotency: same content into the same dataset is a no-op
     progress.stage("checking for existing content");
     if let Some(existing) = relational.find_data_by_hash(dataset_name, &content_hash)? {
+        // The store keeps ids dashless; report the canonical dashed form so
+        // this path and the fresh-write path print the same shape.
+        let data_id = Uuid::parse_str(&existing)
+            .map(|u| u.to_string())
+            .unwrap_or(existing);
         return Ok(RememberReport {
             dataset: dataset_name.to_string(),
-            data_id: existing,
+            data_id,
             content_hash,
             chunks: 0,
             graph_nodes: 0,

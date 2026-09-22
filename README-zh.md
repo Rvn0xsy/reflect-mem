@@ -284,7 +284,7 @@ docker run --rm -p 127.0.0.1:8080:8080 -v "$HOME/.agents/reflect-mem:/data" \
 | `recall <query>` | 检索记忆并综合答案（`--search-type`、`--top-k`、`--hops`） |
 | `remember --data <text>` | 存永久记忆（抽取实体，写图 + 向量） |
 | `forget --data-id <uuid>` \| `--dataset <name>` \| `--everything` | 删除记忆 |
-| `doctor --dump <dir> [--heal-vectors]` | 校验并修复存储一致性 |
+| `doctor [--dump <dir>] [--heal-vectors]` | 修复存储：从 dump 恢复节点，和/或补齐缺失的向量 |
 | `mcp --transport stdio` | 通过 stdio 提供记忆 API |
 | `mcp --transport streamable-http --bind <addr> --token <t>` | 在 `/mcp` 上提供 HTTP 服务，要求 `Authorization: Bearer <t>` |
 

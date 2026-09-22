@@ -98,11 +98,13 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         everything: bool,
     },
-    /// Verify and repair store consistency (needs a graph dump to restore).
+    /// Verify and repair store consistency.
     Doctor {
-        /// Directory with nodes.jsonl (the graph dump) to restore from.
-        #[arg(long, default_value = "./dump")]
-        dump: PathBuf,
+        /// Directory holding nodes.jsonl (a graph dump) to restore missing nodes from.
+        /// Without it, `./dump` is tried and the restore is skipped if absent.
+        #[arg(long)]
+        dump: Option<PathBuf>,
+        /// Re-embed nodes that are missing from the vector store.
         #[arg(long, default_value_t = false)]
         heal_vectors: bool,
     },
@@ -299,20 +301,37 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Doctor { dump, heal_vectors } => {
             let graph = GraphStore::open(&config::graph_db_path())?;
+            let explicit_dump = dump.is_some();
+            let dump = dump.unwrap_or_else(|| PathBuf::from("./dump"));
+            let mut acted = false;
+
+            // Restore from a dump, when there is one. Healing below does not
+            // need it, so a missing dump must not abort the run.
             let nodes_path = dump.join("nodes.jsonl");
-            let dump_text = std::fs::read_to_string(&nodes_path)
-                .with_context(|| format!("reading {}", nodes_path.display()))?;
-            let dump_nodes: Vec<serde_json::Value> = dump_text
-                .lines()
-                .filter(|l| !l.trim().is_empty())
-                .map(serde_json::from_str)
-                .collect::<Result<_, _>>()
-                .context("parsing dump")?;
-            let report = reflect_mem::doctor::repair_graph_from_dump(&graph, &dump_nodes)?;
-            println!(
-                "repair: restored {} nodes, removed {} dangling edges",
-                report.nodes_restored, report.edges_deleted
-            );
+            if nodes_path.exists() {
+                let dump_text = std::fs::read_to_string(&nodes_path)
+                    .with_context(|| format!("reading {}", nodes_path.display()))?;
+                let dump_nodes: Vec<serde_json::Value> = dump_text
+                    .lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .map(serde_json::from_str)
+                    .collect::<Result<_, _>>()
+                    .context("parsing dump")?;
+                let report = reflect_mem::doctor::repair_graph_from_dump(&graph, &dump_nodes)?;
+                println!(
+                    "repair: restored {} nodes, removed {} dangling edges",
+                    report.nodes_restored, report.edges_deleted
+                );
+                acted = true;
+            } else if explicit_dump {
+                anyhow::bail!("no graph dump at {}", nodes_path.display());
+            } else {
+                eprintln!(
+                    "note: no graph dump at {} — skipping restore",
+                    nodes_path.display()
+                );
+            }
+
             if heal_vectors {
                 let embedder = reflect_mem::embed::EmbeddingClient::from_settings()?;
                 let vectors =
@@ -322,6 +341,13 @@ async fn main() -> anyhow::Result<()> {
                 println!(
                     "heal: +{} vectors, -{} stale vectors",
                     healed.vectors_added, healed.vectors_purged
+                );
+                acted = true;
+            }
+
+            if !acted {
+                eprintln!(
+                    "nothing to do — pass --dump <dir> to restore from a dump, or --heal-vectors"
                 );
             }
         }

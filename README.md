@@ -295,7 +295,7 @@ docker run --rm -p 127.0.0.1:8080:8080 -v "$HOME/.agents/reflect-mem:/data" \
 | `recall <query>` | Search memory and synthesise an answer (`--search-type`, `--top-k`, `--hops`) |
 | `remember --data <text>` | Store permanent memory (extract entities, write graph + vectors) |
 | `forget --data-id <uuid>` \| `--dataset <name>` \| `--everything` | Delete memory |
-| `doctor --dump <dir> [--heal-vectors]` | Verify and repair store consistency |
+| `doctor [--dump <dir>] [--heal-vectors]` | Repair the store: restore nodes from a dump and/or re-embed missing vectors |
 | `mcp --transport stdio` | Serve the memory API over stdio |
 | `mcp --transport streamable-http --bind <addr> --token <t>` | Serve over HTTP at `/mcp`, requiring `Authorization: Bearer <t>` |
 
