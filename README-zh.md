@@ -42,7 +42,8 @@
 - **默认自托管。** 所有状态都是 `DATA_ROOT` 下的文件。唯一的网络请求发往你自己配置的 LLM 与
   embedding 端点。
 - **单一静态二进制。** `curl | sh` 就能用。用 `rustls` 而非 OpenSSL，SQLite 内置 —— 无运行时依赖。
-- **模型无关。** 抽取与综合用任意 OpenAI 兼容端点；embedding 用任意 Ollama 模型。
+- **模型无关。** 抽取与综合用任意 OpenAI 兼容端点；embedding 可用本地 Ollama，也可用 OpenAI、Voyage、
+  Cohere 等托管服务（带 API Key）。
 - **写入幂等。** 实体、类型、边都使用确定性的 `uuid5` id，因此重复写入同一段文本是空操作。
 - **stdio 或 streamable HTTP。** 本地 Agent 走 stdio；远程/共享部署走 HTTP + Bearer Token 认证。
 - **提供容器镜像。** 多阶段 `Dockerfile`（非 root、带 healthcheck）加一个 `docker-compose.yml`，
@@ -310,9 +311,11 @@ docker run --rm -p 127.0.0.1:8080:8080 -v "$HOME/.agents/reflect-mem:/data" \
 | `llm.api_key` | `LLM_API_KEY` | — | 必填 |
 | `llm.args` | `LLM_ARGS` | `{}` | 额外请求字段（如 `{ reasoning_split = true }`） |
 | `llm.thinking` | `LLM_THINKING` | *(未设置)* | `disabled` 跳过 chain-of-thought；`adaptive`/未设置则保持开启 |
-| `embedding.endpoint` | `EMBEDDING_ENDPOINT` | `http://localhost:11434/api/embed` | Ollama embed 端点（非 Docker 环境下 `host.docker.internal` 会被自动改写） |
-| `embedding.model` | `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | 任意 Ollama embedding 模型 |
+| `embedding.endpoint` | `EMBEDDING_ENDPOINT` | `http://localhost:11434/api/embed` | Ollama `/api/embed`，或任意 OpenAI 兼容的 `/v1/embeddings`（非 Docker 环境下 `host.docker.internal` 会被自动改写） |
+| `embedding.model` | `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | 任意 embedding 模型 |
 | `embedding.dimensions` | `EMBEDDING_DIMENSIONS` | `1024` | 必须与该模型一致 |
+| `embedding.api_key` | `EMBEDDING_API_KEY` | *(未设置)* | 作为 `Authorization: Bearer` 发送；托管服务基本都需要 |
+| `embedding.headers` | — | `{}` | 额外请求头，用于不用 Bearer 认证的服务 |
 | `mcp.transport` | `MCP_TRANSPORT` | `stdio` | `stdio` 或 `streamable-http` |
 | `mcp.bind` | `MCP_BIND` | `127.0.0.1:8080` | `streamable-http` 的监听地址 |
 | `mcp.token` | `MCP_TOKEN` | *(未设置)* | HTTP 请求必须携带的 Bearer Token |

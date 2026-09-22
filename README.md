@@ -46,8 +46,8 @@ Retrieval has two modes: **`SUMMARIES`** for fast lookups over summarized memory
   and embedding endpoints you configure.
 - **One static binary.** `curl | sh` and run. `rustls` instead of OpenSSL, SQLite bundled — no runtime
   dependencies.
-- **Model-agnostic.** Any OpenAI-compatible chat endpoint for extraction and synthesis; any Ollama model
-  for embeddings.
+- **Model-agnostic.** Any OpenAI-compatible chat endpoint for extraction and synthesis; any embedding
+  backend — a local Ollama, or a hosted API such as OpenAI, Voyage or Cohere, with an API key.
 - **Idempotent writes.** Entities, types and edges use deterministic `uuid5` ids, so re-ingesting the same
   text is a no-op and duplicates collapse.
 - **stdio or streamable HTTP.** stdio for local agents; HTTP with bearer-token auth for remote or shared
@@ -321,9 +321,11 @@ The config file defaults to `<data_root>/config.toml`; override the path with `-
 | `llm.api_key` | `LLM_API_KEY` | — | Required |
 | `llm.args` | `LLM_ARGS` | `{}` | Extra request fields (e.g. `{ reasoning_split = true }`) |
 | `llm.thinking` | `LLM_THINKING` | *(unset)* | `disabled` skips chain-of-thought; `adaptive`/unset keeps it on |
-| `embedding.endpoint` | `EMBEDDING_ENDPOINT` | `http://localhost:11434/api/embed` | Ollama embed endpoint (`host.docker.internal` auto-rewritten outside Docker) |
-| `embedding.model` | `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | Any Ollama embedding model |
+| `embedding.endpoint` | `EMBEDDING_ENDPOINT` | `http://localhost:11434/api/embed` | Ollama `/api/embed` or any OpenAI-compatible `/v1/embeddings` (`host.docker.internal` auto-rewritten outside Docker) |
+| `embedding.model` | `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | Any embedding model |
 | `embedding.dimensions` | `EMBEDDING_DIMENSIONS` | `1024` | Must match that model |
+| `embedding.api_key` | `EMBEDDING_API_KEY` | *(unset)* | Sent as `Authorization: Bearer`; most hosted APIs need it |
+| `embedding.headers` | — | `{}` | Extra request headers, for providers that do not use Bearer |
 | `mcp.transport` | `MCP_TRANSPORT` | `stdio` | `stdio` or `streamable-http` |
 | `mcp.bind` | `MCP_BIND` | `127.0.0.1:8080` | Address for `streamable-http` |
 | `mcp.token` | `MCP_TOKEN` | *(unset)* | Bearer token required on HTTP requests |

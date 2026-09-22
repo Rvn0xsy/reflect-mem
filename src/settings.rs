@@ -29,6 +29,8 @@
 //! endpoint = "http://localhost:11434/api/embed"
 //! model = "qwen3-embedding:0.6b"
 //! dimensions = 1024
+//! api_key = "..."          # optional: sent as `Authorization: Bearer`
+//! headers = { "api-key" = "..." }   # optional: extra request headers
 //!
 //! [mcp]
 //! transport = "stdio"            # or "streamable-http"
@@ -75,6 +77,10 @@ pub struct EmbeddingSettings {
     pub endpoint: String,
     pub model: String,
     pub dimensions: usize,
+    /// Sent as `Authorization: Bearer <key>` when set.
+    pub api_key: Option<String>,
+    /// Extra request headers, for providers that do not use Bearer auth.
+    pub headers: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +130,10 @@ struct FileEmbedding {
     model: Option<String>,
     #[serde(default)]
     dimensions: Option<usize>,
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    headers: Option<std::collections::BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -202,6 +212,8 @@ impl Settings {
                 endpoint: DEFAULT_EMBEDDING_ENDPOINT.into(),
                 model: DEFAULT_EMBEDDING_MODEL.into(),
                 dimensions: DEFAULT_EMBEDDING_DIMENSIONS,
+                api_key: None,
+                headers: Default::default(),
             },
             mcp: McpSettings {
                 transport: DEFAULT_MCP_TRANSPORT.into(),
@@ -246,6 +258,8 @@ impl Settings {
                 .dimensions
                 .unwrap_or(DEFAULT_EMBEDDING_DIMENSIONS),
         };
+        let embed_api_key = env_opt("EMBEDDING_API_KEY").or(f.embedding.api_key);
+        let embed_headers = f.embedding.headers.unwrap_or_default();
 
         let mcp_transport = env_opt("MCP_TRANSPORT")
             .or(f.mcp.transport)
@@ -268,6 +282,8 @@ impl Settings {
                 endpoint: embed_endpoint,
                 model: embed_model,
                 dimensions: embed_dims,
+                api_key: embed_api_key,
+                headers: embed_headers,
             },
             mcp: McpSettings {
                 transport: mcp_transport,

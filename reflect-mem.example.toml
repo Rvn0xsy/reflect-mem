@@ -19,11 +19,22 @@ thinking = "adaptive"           # "disabled" skips chain-of-thought (faster)
 # args = { reasoning_split = true }
 
 [embedding]
-# Must match the model that produced reflect-mem.lancedb, or the existing
-# vectors become unusable.
+# Ollama's /api/embed and any OpenAI-compatible /v1/embeddings endpoint are both
+# supported; the response shape is detected automatically.
 endpoint = "http://localhost:11434/api/embed"
 model = "qwen3-embedding:0.6b"
-dimensions = 1024
+dimensions = 1024               # must match the model
+
+# Hosted providers usually need a key. It is sent as `Authorization: Bearer`.
+# api_key = "sk-..."
+# For providers that authenticate differently (Azure's `api-key`, say):
+# headers = { "api-key" = "..." }
+
+# Example: OpenAI
+# endpoint = "https://api.openai.com/v1/embeddings"
+# model = "text-embedding-3-small"
+# dimensions = 1536
+# api_key = "sk-..."
 
 [mcp]
 transport = "stdio"             # "stdio" or "streamable-http"
