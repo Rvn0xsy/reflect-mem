@@ -218,8 +218,13 @@ pub async fn forget(
         }
     }
 
-    // Vector deletes.
+    // Vector deletes. A store that has never written a given datapoint kind has
+    // no table for it yet, so operate only on the tables that exist.
+    let existing_tables: HashSet<String> = vectors.table_names().await?.into_iter().collect();
     for (table, ids) in &vector_deletes {
+        if !existing_tables.contains(table) {
+            continue;
+        }
         report.vectors_deleted += vectors.delete_by_ids(table, ids).await?;
     }
     let _ = vector_writer;

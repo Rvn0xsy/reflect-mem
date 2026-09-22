@@ -1,7 +1,11 @@
 //! Relational metadata (`reflect-mem.sqlite`, SQLite) — read + minimal writes.
 //!
-//! Reused in place. Writes cover only what ingestion needs (datasets, data,
-//! pipeline status); tenants/ACLs stay read-only in single-user mode.
+//! Writes cover only what ingestion needs (datasets, data, pipeline status);
+//! tenants/ACLs stay read-only in single-user mode.
+//!
+//! A fresh data root is initialised on open: the few tables this binary touches
+//! are created and the single-user owner row is inserted. Both steps are no-ops
+//! against a store that already has them.
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -12,6 +16,72 @@ use serde_json::Value;
 use uuid::Uuid;
 
 const DEFAULT_USER_EMAIL: &str = "default_user@example.com";
+
+/// Schema for the tables this binary reads or writes.
+///
+/// Column names and types mirror the original store so a populated database is
+/// left untouched (`IF NOT EXISTS`), while an empty one becomes usable.
+const SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS users (
+    id               UUID NOT NULL,
+    tenant_id        UUID,
+    parent_user_id   UUID,
+    email            VARCHAR(320) NOT NULL,
+    hashed_password  VARCHAR(1024) NOT NULL,
+    is_active        BOOLEAN NOT NULL,
+    is_superuser     BOOLEAN NOT NULL,
+    is_verified      BOOLEAN NOT NULL,
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email);
+
+CREATE TABLE IF NOT EXISTS datasets (
+    id          UUID NOT NULL,
+    name        TEXT,
+    created_at  DATETIME,
+    updated_at  DATETIME,
+    owner_id    UUID,
+    tenant_id   UUID,
+    PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS ix_datasets_owner_id ON datasets (owner_id);
+CREATE INDEX IF NOT EXISTS ix_datasets_tenant_id ON datasets (tenant_id);
+
+CREATE TABLE IF NOT EXISTS data (
+    id                     UUID NOT NULL,
+    label                  VARCHAR,
+    name                   VARCHAR,
+    extension              VARCHAR,
+    mime_type              VARCHAR,
+    original_extension     VARCHAR,
+    original_mime_type     VARCHAR,
+    loader_engine          VARCHAR,
+    raw_data_location      VARCHAR,
+    original_data_location VARCHAR,
+    owner_id               UUID,
+    tenant_id              UUID,
+    dataset_id             UUID,
+    legacy_id              UUID,
+    content_hash           VARCHAR,
+    raw_content_hash       VARCHAR,
+    external_metadata      JSON,
+    system_metadata        JSON,
+    node_set               JSON,
+    pipeline_status        JSON,
+    token_count            INTEGER,
+    data_size              INTEGER,
+    created_at             DATETIME,
+    updated_at             DATETIME,
+    last_accessed          DATETIME,
+    importance_weight      FLOAT,
+    PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS ix_data_dataset_id ON data (dataset_id);
+CREATE INDEX IF NOT EXISTS ix_data_owner_id ON data (owner_id);
+CREATE INDEX IF NOT EXISTS ix_data_tenant_id ON data (tenant_id);
+CREATE INDEX IF NOT EXISTS ix_data_legacy_id ON data (legacy_id);
+CREATE INDEX IF NOT EXISTS data_dataset_content_lookup ON data (dataset_id, owner_id, content_hash);
+"#;
 
 /// Handle on the relational store.
 pub struct RelationalStore {
@@ -40,9 +110,32 @@ impl RelationalStore {
         let conn = Connection::open(path)
             .with_context(|| format!("opening relational db {}", path.display()))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.execute_batch(SCHEMA)
+            .context("initialising relational schema")?;
+        Self::ensure_default_user(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
+    }
+
+    /// Stable owner id for the single-user bootstrap row.
+    fn default_user_id_value() -> Uuid {
+        Uuid::new_v5(&Uuid::NAMESPACE_OID, b"reflect-mem/default_user")
+    }
+
+    /// Insert the single-user owner row if the store has none.
+    fn ensure_default_user(conn: &Connection) -> Result<()> {
+        conn.execute(
+            "INSERT INTO users (
+                 id, tenant_id, parent_user_id, email, hashed_password,
+                 is_active, is_superuser, is_verified
+             )
+             SELECT ?1, NULL, NULL, ?2, '', 1, 1, 1
+             WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = ?2)",
+            params![dashless(Self::default_user_id_value()), DEFAULT_USER_EMAIL],
+        )
+        .context("creating the default user row")?;
+        Ok(())
     }
 
     /// Lock the connection for a synchronous statement (never held across await).
@@ -66,7 +159,7 @@ impl RelationalStore {
             |r| r.get::<_, String>(0),
         )
         .optional()?
-        .context("default user row missing from reflect-mem.sqlite; run the Python setup once")
+        .context("default user row missing from reflect-mem.sqlite")
     }
 
     /// Existing dataset id (dashless hex, as the legacy store keeps it) or create one.
@@ -328,5 +421,24 @@ mod tests {
                 .unwrap()
                 .contains("COMPLETED")
         );
+    }
+
+    #[test]
+    fn open_bootstraps_an_empty_store() {
+        let dir = std::env::temp_dir().join(format!("reflect-mem-bootstrap-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("reflect-mem.sqlite");
+
+        let store = RelationalStore::open(&db).unwrap();
+        // A fresh store must be usable without any external setup step.
+        let expected = dashless(RelationalStore::default_user_id_value());
+        assert_eq!(store.default_user_id().unwrap(), expected);
+
+        // Re-opening (and an already-populated store) must be a no-op.
+        drop(store);
+        let again = RelationalStore::open(&db).unwrap();
+        assert_eq!(again.default_user_id().unwrap(), expected);
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

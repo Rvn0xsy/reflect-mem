@@ -23,7 +23,9 @@ use crate::ingest::datapoints::Datapoint;
 /// Canonical table schema used only when a table does not exist yet.
 fn canonical_payload_fields() -> Fields {
     Fields::from(vec![
-        Field::new("id", DataType::Utf8, false),
+        // Nullable: a payload is built from a datapoint's properties, which do
+        // not carry the row id — that lives in the top-level `id` column.
+        Field::new("id", DataType::Utf8, true),
         Field::new("created_at", DataType::Int64, true),
         Field::new("updated_at", DataType::Int64, true),
         Field::new("ontology_valid", DataType::Boolean, true),
