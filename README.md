@@ -6,13 +6,9 @@
 
 [![CI](https://github.com/Rvn0xsy/reflect-mem/actions/workflows/ci.yml/badge.svg)](https://github.com/Rvn0xsy/reflect-mem/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/Rvn0xsy/reflect-mem?sort=semver)](https://github.com/Rvn0xsy/reflect-mem/releases)
-[![Rust 1.96](https://img.shields.io/badge/rust-1.96-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![edition 2024](https://img.shields.io/badge/edition-2024-orange)]()
-[![MCP](https://img.shields.io/badge/MCP-ready-blue)]()
-[![SQLite](https://img.shields.io/badge/SQLite-graph%2Frelational-003B57?logo=sqlite&logoColor=white)]()
-[![LanceDB](https://img.shields.io/badge/LanceDB-vectors-8A2BE2)]()
-[![version 0.1.0](https://img.shields.io/badge/version-0.1.0-lightgrey)]()
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.96%2B-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![MCP](https://img.shields.io/badge/MCP-server-blue)](https://modelcontextprotocol.io)
 
 **English** · [简体中文](README-zh.md)
 
@@ -27,6 +23,15 @@ LanceDB for embeddings. No cloud service, no Python runtime, no external databas
 
 Retrieval has two modes: **`SUMMARIES`** for fast lookups over summarized memory, and
 **`GRAPH_COMPLETION`** for questions whose answer has to be stitched together from several memories.
+
+---
+
+## Contents
+
+[Features](#features) · [Tools](#tools) · [How it works](#how-it-works) · [Quick start](#quick-start) ·
+[Docker](#docker) · [CLI reference](#cli-reference) · [Configuration](#configuration) ·
+[Benchmark](#benchmark) · [Data layout](#data-layout) · [Documentation](#documentation) ·
+[License](#license)
 
 ---
 
@@ -62,13 +67,13 @@ Retrieval has two modes: **`SUMMARIES`** for fast lookups over summarized memory
 
 ```jsonc
 // teach it a fact
-{ "name": "remember", "arguments": { "data": "用户的博客主站是 blog.example.com。" } }
+{ "name": "remember", "arguments": { "data": "The user's blog lives at blog.example.com." } }
 
 // ask for it back — fast vector lookup
-{ "name": "recall", "arguments": { "query": "用户的博客地址是什么？", "search_type": "SUMMARIES" } }
+{ "name": "recall", "arguments": { "query": "Where does the user's blog live?" } }
 
 // a question that needs facts connected across hops
-{ "name": "recall", "arguments": { "query": "这个博客托管在哪个平台？", "search_type": "GRAPH_COMPLETION", "hops": 2 } }
+{ "name": "recall", "arguments": { "query": "Which platform hosts that blog?", "search_type": "GRAPH_COMPLETION", "hops": 2 } }
 
 // delete it
 { "name": "forget", "arguments": { "dataset": "main_dataset" } }
@@ -231,7 +236,7 @@ or point it at the HTTP endpoint:
 ```bash
 reflect-mem recall "what did I say about my blog?" --search-type SUMMARIES
 reflect-mem recall "what did I say about my blog?" --search-type GRAPH_COMPLETION --hops 2
-reflect-mem remember --data "用户的博客主站是 blog.example.com。"
+reflect-mem remember --data "The user's blog lives at blog.example.com."
 reflect-mem forget --dataset main_dataset
 ```
 
@@ -328,9 +333,12 @@ The config file defaults to `<data_root>/config.toml`; override the path with `-
 
 ## Benchmark
 
-Measured on a release build against a real memory store (**6,365 nodes / 18,479 edges**, 524 MB LanceDB),
-copied to `/tmp` so the live store is never touched. Local storage and graph numbers exclude process
-startup; end-to-end numbers include the full pipeline (embedding → retrieval → LLM synthesis).
+A single-machine reference, not a guarantee. Environment: **Apple M5 Max (18 cores), macOS 27, arm64**,
+release build with `rustc 1.96.1`, against a store of **6,365 nodes / 18,479 edges** and a 524 MB LanceDB
+copied to `/tmp` so the live store is never touched.
+
+Local storage and graph timings exclude process startup. End-to-end figures include the whole pipeline
+(embedding → retrieval → LLM synthesis), so they are dominated by the model, not by reflect-mem.
 
 ### Graph traversal (pure local, SQLite recursive CTE)
 
@@ -354,7 +362,7 @@ K-hop traversal is **sub-millisecond** — the SQLite graph is not the bottlenec
 
 Embedding (`qwen3-embedding:0.6b`, 1024-dim): **15.4 ms** mean.
 
-### End-to-end recall (real MiniMax LLM)
+### End-to-end recall (real LLM)
 
 | Scenario | thinking on | thinking off | |
 |----------|-------------|--------------|--|
@@ -418,7 +426,7 @@ src/
   forget.rs     cross-store deletion
   doctor.rs     consistency check & repair
   migrate.rs    graph-dump importer
-  llm.rs        MiniMax client (OpenAI-compatible)
+  llm.rs        OpenAI-compatible LLM client
   embed.rs      Ollama embedding client
   config.rs     data-root path layout
   storage/      graph / vector / relational / session-cache
@@ -428,6 +436,19 @@ reflect-mem.example.toml      annotated config template
 Dockerfile / .dockerignore    container image
 .env.example / docker-compose.yml   compose deployment
 ```
+
+## Contributing
+
+Issues and pull requests are welcome. The same three checks CI runs:
+
+```bash
+cargo fmt --all
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked
+```
+
+One gotcha: a dependency's build script generates protobuf bindings, so `protoc` must be on the machine.
+On Debian/Ubuntu that is `apt-get install protobuf-compiler libprotobuf-dev`; on macOS `brew install protobuf`.
 
 ## Acknowledgements
 

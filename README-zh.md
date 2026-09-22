@@ -6,13 +6,9 @@
 
 [![CI](https://github.com/Rvn0xsy/reflect-mem/actions/workflows/ci.yml/badge.svg)](https://github.com/Rvn0xsy/reflect-mem/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/Rvn0xsy/reflect-mem?sort=semver)](https://github.com/Rvn0xsy/reflect-mem/releases)
-[![Rust 1.96](https://img.shields.io/badge/rust-1.96-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![edition 2024](https://img.shields.io/badge/edition-2024-orange)]()
-[![MCP](https://img.shields.io/badge/MCP-ready-blue)]()
-[![SQLite](https://img.shields.io/badge/SQLite-graph%2Frelational-003B57?logo=sqlite&logoColor=white)]()
-[![LanceDB](https://img.shields.io/badge/LanceDB-vectors-8A2BE2)]()
-[![version 0.1.0](https://img.shields.io/badge/version-0.1.0-lightgrey)]()
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.96%2B-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![MCP](https://img.shields.io/badge/MCP-server-blue)](https://modelcontextprotocol.io)
 
 [English](README.md) · **简体中文**
 
@@ -26,6 +22,14 @@
 
 检索有两种模式：**`SUMMARIES`** 面向已生成摘要的快速查找，**`GRAPH_COMPLETION`** 面向那些需要把
 多条记忆拼起来才能回答的问题。
+
+---
+
+## 目录
+
+[特性](#特性) · [工具](#工具) · [工作原理](#工作原理) · [快速开始](#快速开始) ·
+[Docker](#docker) · [CLI 参考](#cli-参考) · [配置](#配置) · [性能测试](#性能测试) ·
+[数据布局](#数据布局) · [文档](#文档) · [许可证](#许可证)
 
 ---
 
@@ -318,9 +322,11 @@ docker run --rm -p 127.0.0.1:8080:8080 -v "$HOME/.agents/reflect-mem:/data" \
 
 ## 性能测试
 
-环境：release 构建，真实记忆库（**6,365 节点 / 18,479 边**，524 MB LanceDB），复制到 `/tmp`
-运行，真实库不受影响。本地存储与图的数字不含进程启动开销；端到端数字包含完整链路
-（embedding → 检索 → LLM 综合）。
+单机参考值，不代表保证。环境：**Apple M5 Max（18 核），macOS 27，arm64**，`rustc 1.96.1` release 构建，
+数据为 **6,365 节点 / 18,479 边** + 524 MB LanceDB，复制到 `/tmp` 运行，真实库不受影响。
+
+本地存储与图的数字不含进程启动开销。端到端数字包含完整链路（embedding → 检索 → LLM 综合），
+因此主要由模型决定，而不是 reflect-mem。
 
 ### 图遍历（纯本地，SQLite 递归 CTE）
 
@@ -344,7 +350,7 @@ K 跳遍历是**亚毫秒级**的 —— SQLite 图不是瓶颈。
 
 Embedding（`qwen3-embedding:0.6b`，1024 维）：均值 **15.4 ms**。
 
-### 端到端 recall（真实 MiniMax LLM）
+### 端到端 recall（真实 LLM）
 
 | 场景 | 开启 thinking | 关闭 thinking | |
 |------|---------------|---------------|--|
@@ -406,7 +412,7 @@ src/
   forget.rs     跨库删除
   doctor.rs     一致性校验与修复
   migrate.rs    图 dump 导入器
-  llm.rs        MiniMax 客户端（OpenAI 兼容）
+  llm.rs        OpenAI 兼容的 LLM 客户端
   embed.rs      Ollama embedding 客户端
   config.rs     数据根目录路径布局
   storage/      图 / 向量 / 关系层 / 会话缓存
@@ -416,6 +422,19 @@ reflect-mem.example.toml      带注释的配置模板
 Dockerfile / .dockerignore    容器镜像
 .env.example / docker-compose.yml   compose 部署
 ```
+
+## 参与贡献
+
+欢迎提 Issue 和 PR。CI 跑的就是这三条：
+
+```bash
+cargo fmt --all
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked
+```
+
+一个坑：某个依赖的 build script 会生成 protobuf 绑定，所以机器上必须有 `protoc`。
+Debian/Ubuntu 上是 `apt-get install protobuf-compiler libprotobuf-dev`；macOS 上是 `brew install protobuf`。
 
 ## 致谢
 
