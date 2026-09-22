@@ -2,7 +2,7 @@
 
 # reflect-mem
 
-**给 AI Agent 的长期记忆 —— 一个 Rust 单二进制，通过 MCP 提供 `remember` / `recall` / `forget`。**
+**给 AI Agent 的长期记忆 —— 自托管、单二进制、原生 MCP。**
 
 [![CI](https://github.com/Rvn0xsy/reflect-mem/actions/workflows/ci.yml/badge.svg)](https://github.com/Rvn0xsy/reflect-mem/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/Rvn0xsy/reflect-mem?sort=semver)](https://github.com/Rvn0xsy/reflect-mem/releases)
@@ -18,33 +18,59 @@
 
 </div>
 
-`reflect-mem` 是一个用 Rust 实现的长期记忆 MCP 服务。它通过 Model Context Protocol 暴露
-`remember` / `recall` / `forget`，让 AI Agent 能存取跨会话存活的事实 —— **不需要 Python 运行时、
-不需要 venv、也不依赖 Kuzu 的 C++ 链接**。
+`reflect-mem` 给 AI Agent 一份跨会话存活的记忆。它说 Model Context Protocol，任何支持 MCP 的客户端
+接上就能拿到三个工具：`remember` 存下事实，`recall` 从已存内容里回答问题，`forget` 删掉它。
 
-它可以直接架在已有的记忆库之上：源文本、`reflect-mem.sqlite`（关系层）和 520 MB 的
-`reflect-mem.lancedb`（向量层）全部**原地**打开，字节级复用。只有私有的 `LBUG+` 图被迁移成
-一个 SQLite 属性图。
+它就是**一个 Rust 二进制 + 一个你自己掌控的目录**：知识图谱和元数据用 SQLite，向量用 LanceDB。
+不依赖云服务、不需要 Python 运行时、也没有外部数据库。
+
+检索有两种模式：**`SUMMARIES`** 面向已生成摘要的快速查找，**`GRAPH_COMPLETION`** 面向那些需要把
+多条记忆拼起来才能回答的问题。
 
 ---
 
 ## 特性
 
-- **单一静态二进制。** 无 Python、无系统 OpenSSL（用 `rustls`）、无 Kuzu 链接。每个存储引擎要么是
-  Rust 原生，要么是 bundled SQLite。
-- **原地复用数据。** `data/text_*.txt`、`reflect-mem.sqlite`、`reflect-mem.lancedb` 全部字节级原地
-  打开 —— embedding 模型不变（`qwen3-embedding:0.6b`，1024 维），所以已有向量继续有效。
-- **亚毫秒级图遍历。** `GRAPH_COMPLETION` 的 K 跳扩展是 SQLite 递归 CTE，跑在约 6.3k 节点 /
-  18.5k 边上，**几十微秒**返回（见[性能测试](#性能测试)）。
-- **两种检索模式。** `SUMMARIES`（对层级摘要做快速向量检索）和 `GRAPH_COMPLETION`
-  （在知识图上做多跳推理）。
-- **三个记忆工具。** `remember`（永久记忆 ETL 或会话快路径）、`recall`、`forget`
-  （按溯源分区、跨库删除），外加 `doctor` 做一致性修复。
-- **确定性 ID。** 实体、类型、边都是 `uuid5` 推导，所以重复写入同一批事实是幂等且去重的。
-- **配置文件 + 两种传输。** 一个 TOML 文件（环境变量可覆盖）驱动全部配置；MCP 服务支持
-  **stdio** 与 **streamable HTTP**，后者可选 Bearer Token 认证。
+- **两种检索模式。** `SUMMARIES` 对已生成的摘要做快速查找；`GRAPH_COMPLETION` 适合答案需要跨多条
+  记忆串联的情况（多跳推理）。
+- **不只是向量，还有图。** 写入时会抽取实体与关系，所以检索可以沿着图走。K 跳扩展是 SQLite
+  递归 CTE —— 在约 18k 条边上只要**几十微秒**（见[性能测试](#性能测试)）。
+- **默认自托管。** 所有状态都是 `DATA_ROOT` 下的文件。唯一的网络请求发往你自己配置的 LLM 与
+  embedding 端点。
+- **单一静态二进制。** `curl | sh` 就能用。用 `rustls` 而非 OpenSSL，SQLite 内置 —— 无运行时依赖。
+- **模型无关。** 抽取与综合用任意 OpenAI 兼容端点；embedding 用任意 Ollama 模型。
+- **写入幂等。** 实体、类型、边都用确定性的 `uuid5` id，所以重复写入同一段文本是空操作，不会产生
+  重复。
+- **stdio 或 streamable HTTP。** 本地 Agent 走 stdio；远程/共享部署走 HTTP + Bearer Token 认证。
 - **提供容器镜像。** 多阶段 `Dockerfile`（非 root、带 healthcheck）加一个 `docker-compose.yml`，
   一条命令拉起带 Token 保护的 HTTP 端点。
+
+---
+
+## 工具
+
+| 工具 | 作用 |
+|------|------|
+| **`remember`** | 写入文本：切块 → 抽取实体与关系 → 写知识图谱和向量。同一内容写两次是空操作。 |
+| **`recall`** | 用已存记忆回答问题。`search_type` 选 `SUMMARIES`（默认）或 `GRAPH_COMPLETION`；`top_k` 限制取回量，`hops` 控制图扩展深度。 |
+| **`forget`** | 按 `data_id` + `dataset`、按 `dataset`、或 `everything` 删除。按溯源分区：仍被其他记忆引用的实体只解绑，不销毁。 |
+
+```jsonc
+// 存一个事实
+{ "name": "remember", "arguments": { "data": "用户的博客主站是 blog.example.com。" } }
+
+// 问回来 —— 快速向量检索
+{ "name": "recall", "arguments": { "query": "用户的博客地址是什么？", "search_type": "SUMMARIES" } }
+
+// 需要跨跳串起来的问题
+{ "name": "recall", "arguments": { "query": "这个博客托管在哪个平台？", "search_type": "GRAPH_COMPLETION", "hops": 2 } }
+
+// 删掉
+{ "name": "forget", "arguments": { "dataset": "main_dataset" } }
+```
+
+`SUMMARIES` 直接返回最接近的预生成摘要 —— 便宜，而且多数情况够用。`GRAPH_COMPLETION` 先用同一个
+向量索引找种子，再沿知识图谱向外走 `hops` 跳并综合答案；当没有单条记忆能独立回答时，它就是你要的。
 
 ---
 
@@ -54,25 +80,28 @@
 ┌──────────────────────────────────────────────────────────────┐
 │                     reflect-mem (Rust)                       │
 │                                                              │
-│   MCP 层 (rmcp)  ·  remember / recall / forget               │
-│   transports: stdio · streamable HTTP + bearer token          │
+│   MCP 层 (rmcp)    remember · recall · forget                │
+│   transports       stdio · streamable HTTP + bearer token     │
 │  ─────────────────────────────────────────────────────────── │
-│   recall     SUMMARIES ──────────► LanceDB 向量检索           │
-│              GRAPH_COMPLETION ──► 向量 → SQLite K 跳 CTE      │
-│   remember   切块 → MiniMax 抽取 → 写图 + 向量                │
+│   remember   切块 ─► 实体抽取 ─► 写图 + 向量                  │
+│   recall     SUMMARIES ──────────► 向量检索（快）             │
+│              GRAPH_COMPLETION ──► K 跳图遍历 + 综合           │
 │   forget     跨库删除，按溯源分区                             │
 │  ─────────────────────────────────────────────────────────── │
-│   SQLite   图 · 关系层 · 会话缓存                             │
-│   LanceDB  向量（原地复用）                                   │
+│   SQLite    知识图谱 · 元数据 · 会话缓存                      │
+│   LanceDB   向量                                              │
 └───────────────────────────────┬──────────────────────────────┘
-                                │ 仅 HTTP
+                                │ HTTP
                      ┌──────────┴───────────┐
-                     │ MiniMax LLM          │  实体抽取 + 答案综合
-                     │ Ollama embedding     │  qwen3-embedding:0.6b (1024d)
+                     │ LLM (OpenAI 兼容)    │  实体抽取 + 答案综合
+                     │ Embeddings (Ollama)  │  任意模型
                      └──────────────────────┘
 ```
 
-所有外部依赖都是普通 HTTP。宿主机上除这个二进制外无需安装任何东西。
+写入会把文本变成三样东西 —— `DocumentChunk` 节点、从其中抽取的实体与关系、以及每个 chunk 的摘要。
+检索时看哪一样最能回答问题就读回哪一样。
+
+所有外部依赖都是普通 HTTP，只会联系 LLM 与 embedding 端点，其余全部留在磁盘上。
 
 ---
 
@@ -124,9 +153,11 @@ api_key = "sk-..."
 thinking = "disabled"          # 跳过 chain-of-thought（更快）
 
 [embedding]
-model = "qwen3-embedding:0.6b" # 必须与产出向量的模型一致
-dimensions = 1024
+model = "qwen3-embedding:0.6b" # 任意 Ollama embedding 模型
+dimensions = 1024              # 必须与该模型一致
 ```
+
+数据根目录（默认 `~/.agents/reflect-mem`）会在**首次运行时自动创建**（含 schema），无需手动初始化。
 
 环境变量依然可用，且**优先级高于配置文件**，因此容器/CI 无需改配置文件就能注入密钥：
 
@@ -136,7 +167,8 @@ LLM_API_KEY=sk-... reflect-mem mcp
 
 用 `--config /path/to/config.toml` 或 `$REFLECT_MEM_CONFIG` 指定其它配置文件。
 
-> `embedding.model` **必须**与产出已有向量的模型一致，否则复用的 `reflect-mem.lancedb` 会失效。
+> `embedding.model` 与 `embedding.dimensions` 一旦存了东西就不要再改：不同模型的向量不可比较，
+> 改动任何一个都会让已存的 embedding 失效。
 
 ### 3. 以 MCP 方式提供服务
 
@@ -244,7 +276,7 @@ docker run --rm -p 127.0.0.1:8080:8080 -v "$HOME/.agents/reflect-mem:/data" \
 | `migrate --input <dir>` | 导入图 dump（`nodes.jsonl` / `edges.jsonl`）到 `reflect-mem.graph.sqlite` |
 | `inspect` | 节点/边计数与类型直方图 |
 | `traverse <id> --hops N` | 打印某节点的 K 跳邻域 |
-| `vectors` | 列出复用的 LanceDB 表及行数 |
+| `vectors` | 列出 LanceDB 表及行数 |
 | `recall <query>` | 检索记忆并综合答案（`--search-type`、`--top-k`、`--hops`） |
 | `remember --data <text>` | 存永久记忆（抽取实体，写图 + 向量） |
 | `forget --data-id <uuid>` \| `--dataset <name>` \| `--everything` | 删除记忆 |
@@ -275,8 +307,8 @@ docker run --rm -p 127.0.0.1:8080:8080 -v "$HOME/.agents/reflect-mem:/data" \
 | `llm.args` | `LLM_ARGS` | `{}` | 额外请求字段（如 `{ reasoning_split = true }`） |
 | `llm.thinking` | `LLM_THINKING` | *(未设置)* | `disabled` 跳过 chain-of-thought；`adaptive`/未设置则保持开启 |
 | `embedding.endpoint` | `EMBEDDING_ENDPOINT` | `http://localhost:11434/api/embed` | Ollama embed 端点（非 Docker 环境下 `host.docker.internal` 会被自动改写） |
-| `embedding.model` | `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | 必须与已有向量一致 |
-| `embedding.dimensions` | `EMBEDDING_DIMENSIONS` | `1024` | 必须与已有向量一致 |
+| `embedding.model` | `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | 任意 Ollama embedding 模型 |
+| `embedding.dimensions` | `EMBEDDING_DIMENSIONS` | `1024` | 必须与该模型一致 |
 | `mcp.transport` | `MCP_TRANSPORT` | `stdio` | `stdio` 或 `streamable-http` |
 | `mcp.bind` | `MCP_BIND` | `127.0.0.1:8080` | `streamable-http` 的监听地址 |
 | `mcp.token` | `MCP_TOKEN` | *(未设置)* | HTTP 请求必须携带的 Bearer Token |
@@ -334,6 +366,26 @@ BENCH_ROOT=/tmp/reflect-mem-bench cargo run --release --bin bench
 
 # 3. 端到端 recall 用 CLI 测（需要 LLM + Ollama）
 ```
+
+---
+
+## 数据布局
+
+所有东西都在 `DATA_ROOT` 下（默认 `~/.agents/reflect-mem`）。它会在首次运行时创建，整体拷贝、备份、
+迁移都是安全的：
+
+```
+<DATA_ROOT>/
+  system/databases/
+    reflect-mem.sqlite         # datasets、data 行、流水线状态
+    reflect-mem.graph.sqlite   # 知识图谱（节点 / 边）
+    reflect-mem.lancedb/       # 向量
+  data/text_<hash>.txt         # 源文本，按内容寻址
+```
+
+把 `DATA_ROOT` 指向一个已有目录就能接着用 —— store 是**原地打开**的，不是导入。删掉目录即重置一切。
+
+由于 id 是从内容确定性推导的，重复写入已存过的文本是空操作，不会产生重复。
 
 ---
 

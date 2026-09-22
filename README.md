@@ -2,7 +2,7 @@
 
 # reflect-mem
 
-**Long-term memory for AI agents — a single Rust binary that serves `remember` / `recall` / `forget` over MCP.**
+**Long-term memory for AI agents — self-hosted, one binary, MCP-native.**
 
 [![CI](https://github.com/Rvn0xsy/reflect-mem/actions/workflows/ci.yml/badge.svg)](https://github.com/Rvn0xsy/reflect-mem/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/Rvn0xsy/reflect-mem?sort=semver)](https://github.com/Rvn0xsy/reflect-mem/releases)
@@ -18,35 +18,65 @@
 
 </div>
 
-`reflect-mem` is a long-term memory MCP server written in Rust. It exposes `remember` / `recall` / `forget` over
-the Model Context Protocol so an AI agent can store and retrieve facts that survive across conversations — **without
-a Python runtime, a venv, or a Kuzu C++ dependency**.
+`reflect-mem` gives an AI agent a memory that survives the conversation. It speaks the Model Context
+Protocol, so any MCP-capable client can point at it and get three tools: `remember` stores a fact, `recall`
+answers a question from what it has stored, and `forget` deletes it.
 
-It drops in on top of an existing memory store: source text, the `reflect-mem.sqlite` relational layer and
-the 520 MB `reflect-mem.lancedb` vector store are all opened **in place**, byte-for-byte. Only the private
-`LBUG+` graph is migrated, into a SQLite property graph.
+It is one Rust binary plus a directory of files you own — SQLite for the knowledge graph and metadata,
+LanceDB for embeddings. No cloud service, no Python runtime, no external database.
+
+Retrieval has two modes: **`SUMMARIES`** for fast lookups over summarized memory, and
+**`GRAPH_COMPLETION`** for questions whose answer has to be stitched together from several memories.
 
 ---
 
 ## Features
 
-- **Single static binary.** No Python, no system OpenSSL (`rustls`), no Kuzu linkage. Every storage
-  engine is either Rust-native or bundled SQLite.
-- **In-place data reuse.** Opens `data/text_*.txt`, `reflect-mem.sqlite`, and `reflect-mem.lancedb` byte-for-byte in
-  place — the embedding model is unchanged (`qwen3-embedding:0.6b`, 1024-dim), so existing vectors stay
-  valid.
-- **Sub-millisecond graph traversal.** `GRAPH_COMPLETION`'s K-hop expansion runs as a SQLite recursive
-  CTE over ~6.3k nodes / ~18.5k edges and returns in **tens of microseconds** (see [Benchmark](#benchmark)).
-- **Two retrieval modes.** `SUMMARIES` (fast vector search over hierarchical summaries) and
-  `GRAPH_COMPLETION` (multi-hop reasoning over the knowledge graph).
-- **Three memory tools.** `remember` (permanent ETL or session fast-path), `recall`, `forget`
-  (provenance-scoped, cross-store deletion), plus `doctor` for consistency repair.
-- **Deterministic IDs.** Entities, types and edges are `uuid5`-derived, so re-ingesting the same facts is
-  idempotent and deduplicated.
-- **Config file + two transports.** One TOML file (env vars override it) drives everything, and the MCP
-  server speaks **stdio** or **streamable HTTP** with optional bearer-token auth.
+- **Two retrieval modes.** `SUMMARIES` for fast lookups over pre-computed summaries; `GRAPH_COMPLETION`
+  when the answer needs facts connected across several memories (multi-hop reasoning).
+- **A graph, not just vectors.** Ingestion extracts entities and relations, so retrieval can walk the
+  graph. K-hop expansion is a SQLite recursive CTE — **tens of microseconds** over ~18k edges
+  (see [Benchmark](#benchmark)).
+- **Self-hosted by default.** All state is files under `DATA_ROOT`. The only network calls go to the LLM
+  and embedding endpoints you configure.
+- **One static binary.** `curl | sh` and run. `rustls` instead of OpenSSL, SQLite bundled — no runtime
+  dependencies.
+- **Model-agnostic.** Any OpenAI-compatible chat endpoint for extraction and synthesis; any Ollama model
+  for embeddings.
+- **Idempotent writes.** Entities, types and edges use deterministic `uuid5` ids, so re-ingesting the same
+  text is a no-op and duplicates collapse.
+- **stdio or streamable HTTP.** stdio for local agents; HTTP with bearer-token auth for remote or shared
+  deployments.
 - **Ships as a container.** Multi-stage `Dockerfile` (non-root, healthcheck) plus a `docker-compose.yml`
   that starts a token-protected HTTP endpoint in one command.
+
+---
+
+## Tools
+
+| Tool | What it does |
+|------|--------------|
+| **`remember`** | Ingest text: chunk → extract entities and relations → write the knowledge graph and embeddings. Ingesting identical content twice is a no-op. |
+| **`recall`** | Answer a question from stored memory. `search_type` picks `SUMMARIES` (default) or `GRAPH_COMPLETION`; `top_k` bounds how much is retrieved, `hops` sets graph expansion depth. |
+| **`forget`** | Delete by `data_id` + `dataset`, by `dataset`, or `everything`. Provenance-scoped: entities still referenced by surviving memories are detached, not destroyed. |
+
+```jsonc
+// teach it a fact
+{ "name": "remember", "arguments": { "data": "用户的博客主站是 blog.example.com。" } }
+
+// ask for it back — fast vector lookup
+{ "name": "recall", "arguments": { "query": "用户的博客地址是什么？", "search_type": "SUMMARIES" } }
+
+// a question that needs facts connected across hops
+{ "name": "recall", "arguments": { "query": "这个博客托管在哪个平台？", "search_type": "GRAPH_COMPLETION", "hops": 2 } }
+
+// delete it
+{ "name": "forget", "arguments": { "dataset": "main_dataset" } }
+```
+
+`SUMMARIES` returns the closest pre-computed summaries — cheap, and usually enough. `GRAPH_COMPLETION`
+seeds from the same vector index, then walks the knowledge graph out to `hops` and synthesises an answer;
+that is what you want when no single memory holds the answer on its own.
 
 ---
 
@@ -56,26 +86,29 @@ the 520 MB `reflect-mem.lancedb` vector store are all opened **in place**, byte-
 ┌──────────────────────────────────────────────────────────────┐
 │                     reflect-mem (Rust)                       │
 │                                                              │
-│   MCP layer (rmcp)  ·  remember / recall / forget            │
-│   transports: stdio · streamable HTTP + bearer token          │
+│   MCP layer (rmcp)   remember · recall · forget              │
+│   transports         stdio · streamable HTTP + bearer token  │
 │  ─────────────────────────────────────────────────────────── │
-│   recall     SUMMARIES ──────────► LanceDB vector search      │
-│              GRAPH_COMPLETION ──► vectors → SQLite K-hop CTE │
-│   remember   chunk → MiniMax extraction → graph + vectors    │
-│   forget     cross-store, provenance-scoped                   │
+│   remember   chunk ─► entity extraction ─► graph + embeddings│
+│   recall     SUMMARIES ──────────► vector search (fast)      │
+│              GRAPH_COMPLETION ──► K-hop graph walk + synth.  │
+│   forget     provenance-scoped, cross-store delete           │
 │  ─────────────────────────────────────────────────────────── │
-│   SQLite   graph · relational · session-cache                 │
-│   LanceDB  vectors (reused in place)                          │
+│   SQLite    knowledge graph · metadata · session cache        │
+│   LanceDB   embeddings                                       │
 └───────────────────────────────┬──────────────────────────────┘
-                                │ HTTP only
+                                │ HTTP
                      ┌──────────┴───────────┐
-                     │ MiniMax LLM          │  entity extraction + synthesis
-                     │ Ollama embedding     │  qwen3-embedding:0.6b (1024d)
+                     │ LLM (OpenAI-compat)  │  extraction + synthesis
+                     │ Embeddings (Ollama)  │  any model
                      └──────────────────────┘
 ```
 
-All external dependencies are plain HTTP. Nothing on the host needs to be installed beyond the binary
-itself.
+Ingestion turns text into three things — `DocumentChunk` nodes, the entities and relations extracted from
+them, and a summary per chunk. Retrieval reads back whichever of those answers the question best.
+
+All external dependencies are plain HTTP. Only the LLM and embedding endpoints are contacted; everything
+else stays on disk.
 
 ---
 
@@ -127,9 +160,12 @@ api_key = "sk-..."
 thinking = "disabled"          # skip chain-of-thought (faster)
 
 [embedding]
-model = "qwen3-embedding:0.6b" # must match the model that produced the vectors
-dimensions = 1024
+model = "qwen3-embedding:0.6b" # any Ollama embedding model
+dimensions = 1024              # must match that model
 ```
+
+The data root (`~/.agents/reflect-mem` by default) is created on first run — schema and all — so there is
+nothing to initialise by hand.
 
 Environment variables still work and **override** the file, so containers/CI can inject secrets without
 editing config:
@@ -140,8 +176,9 @@ LLM_API_KEY=sk-... reflect-mem mcp
 
 Point at a different file with `--config /path/to/config.toml` or `$REFLECT_MEM_CONFIG`.
 
-> `embedding.model` **must** match the model that produced the existing vectors, or the reused
-> `reflect-mem.lancedb` becomes unusable.
+> `embedding.model` and `embedding.dimensions` have to stay stable once you have stored anything:
+> vectors from different models are not comparable, so changing either makes existing embeddings
+> unreadable.
 
 ### 3. Serve over MCP
 
@@ -249,7 +286,7 @@ docker run --rm -p 127.0.0.1:8080:8080 -v "$HOME/.agents/reflect-mem:/data" \
 | `migrate --input <dir>` | Import a graph dump (`nodes.jsonl` / `edges.jsonl`) into `reflect-mem.graph.sqlite` |
 | `inspect` | Node/edge counts and type histograms |
 | `traverse <id> --hops N` | Print the K-hop neighbourhood of a node |
-| `vectors` | List reused LanceDB tables and row counts |
+| `vectors` | List LanceDB tables and row counts |
 | `recall <query>` | Search memory and synthesise an answer (`--search-type`, `--top-k`, `--hops`) |
 | `remember --data <text>` | Store permanent memory (extract entities, write graph + vectors) |
 | `forget --data-id <uuid>` \| `--dataset <name>` \| `--everything` | Delete memory |
@@ -280,8 +317,8 @@ The config file defaults to `<data_root>/config.toml`; override the path with `-
 | `llm.args` | `LLM_ARGS` | `{}` | Extra request fields (e.g. `{ reasoning_split = true }`) |
 | `llm.thinking` | `LLM_THINKING` | *(unset)* | `disabled` skips chain-of-thought; `adaptive`/unset keeps it on |
 | `embedding.endpoint` | `EMBEDDING_ENDPOINT` | `http://localhost:11434/api/embed` | Ollama embed endpoint (`host.docker.internal` auto-rewritten outside Docker) |
-| `embedding.model` | `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | Must match the existing vectors |
-| `embedding.dimensions` | `EMBEDDING_DIMENSIONS` | `1024` | Must match the existing vectors |
+| `embedding.model` | `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | Any Ollama embedding model |
+| `embedding.dimensions` | `EMBEDDING_DIMENSIONS` | `1024` | Must match that model |
 | `mcp.transport` | `MCP_TRANSPORT` | `stdio` | `stdio` or `streamable-http` |
 | `mcp.bind` | `MCP_BIND` | `127.0.0.1:8080` | Address for `streamable-http` |
 | `mcp.token` | `MCP_TOKEN` | *(unset)* | Bearer token required on HTTP requests |
@@ -339,6 +376,28 @@ BENCH_ROOT=/tmp/reflect-mem-bench cargo run --release --bin bench
 
 # 3. end-to-end recall is measured via the CLI (needs LLM + Ollama)
 ```
+
+---
+
+## Data layout
+
+Everything lives under `DATA_ROOT` (`~/.agents/reflect-mem` by default). It is created on first run and is
+safe to copy, back up or move as a whole:
+
+```
+<DATA_ROOT>/
+  system/databases/
+    reflect-mem.sqlite         # datasets, data rows, pipeline status
+    reflect-mem.graph.sqlite   # knowledge graph (nodes / edges)
+    reflect-mem.lancedb/       # embeddings
+  data/text_<hash>.txt         # source text, content-addressed
+```
+
+Point `DATA_ROOT` at an existing directory to pick up where you left off — stores are opened in place, not
+imported. Deleting the directory resets everything.
+
+Because ids are derived deterministically from content, re-ingesting text you already stored is a no-op
+rather than a duplicate.
 
 ---
 
