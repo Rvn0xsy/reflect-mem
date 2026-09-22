@@ -14,14 +14,14 @@
 
 </div>
 
-`reflect-mem` 给 AI Agent 一份跨会话存活的记忆。它说 Model Context Protocol，任何支持 MCP 的客户端
-接上就能拿到三个工具：`remember` 存下事实，`recall` 从已存内容里回答问题，`forget` 删掉它。
+`reflect-mem` 让 AI Agent 拥有跨会话的记忆。它实现了 Model Context Protocol（MCP），任何支持 MCP 的
+客户端接入后即可获得三个工具：`remember` 写入事实，`recall` 基于已存内容回答问题，`forget` 删除记忆。
 
-它就是**一个 Rust 二进制 + 一个你自己掌控的目录**：知识图谱和元数据用 SQLite，向量用 LanceDB。
-不依赖云服务、不需要 Python 运行时、也没有外部数据库。
+整个项目就是**一个 Rust 二进制加一个由你掌控的目录**：知识图谱和元数据用 SQLite，向量用 LanceDB。
+不依赖云服务，不需要 Python 运行时，也没有外部数据库。
 
-检索有两种模式：**`SUMMARIES`** 面向已生成摘要的快速查找，**`GRAPH_COMPLETION`** 面向那些需要把
-多条记忆拼起来才能回答的问题。
+检索有两种模式：**`SUMMARIES`** 对已生成的摘要做快速查找，**`GRAPH_COMPLETION`** 用于需要串联多条
+记忆才能回答的问题。
 
 ---
 
@@ -37,14 +37,13 @@
 
 - **两种检索模式。** `SUMMARIES` 对已生成的摘要做快速查找；`GRAPH_COMPLETION` 适合答案需要跨多条
   记忆串联的情况（多跳推理）。
-- **不只是向量，还有图。** 写入时会抽取实体与关系，所以检索可以沿着图走。K 跳扩展是 SQLite
-  递归 CTE —— 在约 18k 条边上只要**几十微秒**（见[性能测试](#性能测试)）。
+- **不只是向量，还有图。** 写入时会抽取实体与关系，因此检索可以沿图遍历。K 跳扩展是 SQLite
+  递归 CTE —— 在约 18k 条边上耗时**几十微秒**（见[性能测试](#性能测试)）。
 - **默认自托管。** 所有状态都是 `DATA_ROOT` 下的文件。唯一的网络请求发往你自己配置的 LLM 与
   embedding 端点。
 - **单一静态二进制。** `curl | sh` 就能用。用 `rustls` 而非 OpenSSL，SQLite 内置 —— 无运行时依赖。
 - **模型无关。** 抽取与综合用任意 OpenAI 兼容端点；embedding 用任意 Ollama 模型。
-- **写入幂等。** 实体、类型、边都用确定性的 `uuid5` id，所以重复写入同一段文本是空操作，不会产生
-  重复。
+- **写入幂等。** 实体、类型、边都使用确定性的 `uuid5` id，因此重复写入同一段文本是空操作。
 - **stdio 或 streamable HTTP。** 本地 Agent 走 stdio；远程/共享部署走 HTTP + Bearer Token 认证。
 - **提供容器镜像。** 多阶段 `Dockerfile`（非 root、带 healthcheck）加一个 `docker-compose.yml`，
   一条命令拉起带 Token 保护的 HTTP 端点。
@@ -63,18 +62,19 @@
 // 存一个事实
 { "name": "remember", "arguments": { "data": "用户的博客主站是 blog.example.com。" } }
 
-// 问回来 —— 快速向量检索
+// 取回该事实 —— 快速向量检索
 { "name": "recall", "arguments": { "query": "用户的博客地址是什么？", "search_type": "SUMMARIES" } }
 
-// 需要跨跳串起来的问题
+// 需要多跳串联的问题
 { "name": "recall", "arguments": { "query": "这个博客托管在哪个平台？", "search_type": "GRAPH_COMPLETION", "hops": 2 } }
 
-// 删掉
+// 删除
 { "name": "forget", "arguments": { "dataset": "main_dataset" } }
 ```
 
-`SUMMARIES` 直接返回最接近的预生成摘要 —— 便宜，而且多数情况够用。`GRAPH_COMPLETION` 先用同一个
-向量索引找种子，再沿知识图谱向外走 `hops` 跳并综合答案；当没有单条记忆能独立回答时，它就是你要的。
+`SUMMARIES` 直接返回最相近的预生成摘要 —— 开销小，多数情况下够用。`GRAPH_COMPLETION` 先用同一个
+向量索引选出种子节点，再沿知识图谱向外扩展 `hops` 跳并综合出答案；当没有任何单条记忆能独立回答时，
+就该用它。
 
 ---
 
@@ -102,10 +102,10 @@
                      └──────────────────────┘
 ```
 
-写入会把文本变成三样东西 —— `DocumentChunk` 节点、从其中抽取的实体与关系、以及每个 chunk 的摘要。
-检索时看哪一样最能回答问题就读回哪一样。
+写入会把文本拆成三类产物 —— `DocumentChunk` 节点、由其中抽取出的实体与关系、以及每个 chunk 的摘要。
+检索时按哪一类最能回答问题来选择读取。
 
-所有外部依赖都是普通 HTTP，只会联系 LLM 与 embedding 端点，其余全部留在磁盘上。
+所有外部依赖都是普通 HTTP，只与 LLM 和 embedding 端点通信，其余全部留在本地磁盘。
 
 ---
 
@@ -171,7 +171,7 @@ LLM_API_KEY=sk-... reflect-mem mcp
 
 用 `--config /path/to/config.toml` 或 `$REFLECT_MEM_CONFIG` 指定其它配置文件。
 
-> `embedding.model` 与 `embedding.dimensions` 一旦存了东西就不要再改：不同模型的向量不可比较，
+> `embedding.model` 与 `embedding.dimensions` 一旦存入了数据就不要再改：不同模型的向量不可比较，
 > 改动任何一个都会让已存的 embedding 失效。
 
 ### 3. 以 MCP 方式提供服务
@@ -220,7 +220,7 @@ reflect-mem mcp --transport streamable-http --bind 127.0.0.1:8080 --token "$SECR
 }
 ```
 
-### 4. 试试 CLI
+### 4. 试用 CLI
 
 ```bash
 reflect-mem recall "我之前的博客地址是什么？" --search-type SUMMARIES
@@ -263,7 +263,7 @@ curl -X POST http://127.0.0.1:8080/mcp \
 > 容器以 uid `10001` 运行，需要对 `DATA_DIR` 有**写权限**（SQLite WAL、LanceDB）。
 > 若无法写入，在 compose 服务里加 `user: "$(id -u):$(id -g)"`。
 
-不用 compose 直接跑：
+不用 compose 直接运行：
 
 ```bash
 docker build -t reflect-mem .
@@ -322,15 +322,15 @@ docker run --rm -p 127.0.0.1:8080:8080 -v "$HOME/.agents/reflect-mem:/data" \
 
 ## 性能测试
 
-单机参考值，不代表保证。环境：**Apple M5 Max（18 核），macOS 27，arm64**，`rustc 1.96.1` release 构建，
-数据为 **6,365 节点 / 18,479 边** + 524 MB LanceDB，复制到 `/tmp` 运行，真实库不受影响。
+单机参考值，并非性能承诺。环境：**Apple M5 Max（18 核），macOS 27，arm64**，`rustc 1.96.1` release 构建，
+数据为 **6,365 节点 / 18,479 边** 加 524 MB LanceDB，复制到 `/tmp` 运行，真实库不受影响。
 
 本地存储与图的数字不含进程启动开销。端到端数字包含完整链路（embedding → 检索 → LLM 综合），
-因此主要由模型决定，而不是 reflect-mem。
+因此瓶颈在模型，不在 reflect-mem。
 
 ### 图遍历（纯本地，SQLite 递归 CTE）
 
-50 个实体种子 × 3 轮，即 `GRAPH_COMPLETION` 的图半边：
+50 个实体种子 × 3 轮，即 `GRAPH_COMPLETION` 的图检索部分：
 
 | 跳数 | 均值 | p50 | p95 | p99 | 平均节点 | 平均边 |
 |------|------|-----|-----|-----|----------|--------|
@@ -367,7 +367,7 @@ Embedding（`qwen3-embedding:0.6b`，1024 维）：均值 **15.4 ms**。
 cp -R ~/.agents/reflect-mem/system/databases/reflect-mem.graph.sqlite /tmp/reflect-mem-bench/
 cp -R ~/.agents/reflect-mem/system/databases/reflect-mem.lancedb /tmp/reflect-mem-bench/
 
-# 2. 跑本地热路径压测（图 + embedding + 向量检索）
+# 2. 运行本地关键路径基准（图 + embedding + 向量检索）
 BENCH_ROOT=/tmp/reflect-mem-bench cargo run --release --bin bench
 
 # 3. 端到端 recall 用 CLI 测（需要 LLM + Ollama）
@@ -377,8 +377,8 @@ BENCH_ROOT=/tmp/reflect-mem-bench cargo run --release --bin bench
 
 ## 数据布局
 
-所有东西都在 `DATA_ROOT` 下（默认 `~/.agents/reflect-mem`）。它会在首次运行时创建，整体拷贝、备份、
-迁移都是安全的：
+所有数据都位于 `DATA_ROOT` 下（默认 `~/.agents/reflect-mem`）。该目录在首次运行时创建，可以整体拷贝、
+备份或迁移：
 
 ```
 <DATA_ROOT>/
@@ -389,16 +389,17 @@ BENCH_ROOT=/tmp/reflect-mem-bench cargo run --release --bin bench
   data/text_<hash>.txt         # 源文本，按内容寻址
 ```
 
-把 `DATA_ROOT` 指向一个已有目录就能接着用 —— store 是**原地打开**的，不是导入。删掉目录即重置一切。
+把 `DATA_ROOT` 指向一个已有目录即可继续使用 —— 存储是**就地打开**的，不是导入。删除该目录即清空
+所有数据。
 
-由于 id 是从内容确定性推导的，重复写入已存过的文本是空操作，不会产生重复。
+由于 id 由内容确定性推导而来，重复写入已存过的文本是空操作。
 
 ---
 
 ## 文档
 
-- [`skills/reflect-mem-memory/SKILL.md`](skills/reflect-mem-memory/SKILL.md) —— 给使用这些工具的
-  AI Agent 看的操作说明（remember / recall / forget 语义）。
+- [`skills/reflect-mem-memory/SKILL.md`](skills/reflect-mem-memory/SKILL.md) —— 面向使用这些工具的
+  AI Agent 的操作说明（remember / recall / forget 语义）。
 
 ## 项目结构
 
@@ -425,7 +426,7 @@ Dockerfile / .dockerignore    容器镜像
 
 ## 参与贡献
 
-欢迎提 Issue 和 PR。CI 跑的就是这三条：
+欢迎提交 Issue 和 Pull Request。CI 会执行以下三项检查：
 
 ```bash
 cargo fmt --all
@@ -433,13 +434,13 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 ```
 
-一个坑：某个依赖的 build script 会生成 protobuf 绑定，所以机器上必须有 `protoc`。
+注意：某个依赖的 build script 会生成 protobuf 绑定，因此构建机上必须有 `protoc`。
 Debian/Ubuntu 上是 `apt-get install protobuf-compiler libprotobuf-dev`；macOS 上是 `brew install protobuf`。
 
 ## 致谢
 
-本项目的存储布局、图 schema 与写入管线参考了
-[cognee](https://www.cognee.ai) —— 也就是本项目用 Rust 重新实现的参考实现。
+本项目的存储布局、图 schema 与写入管线参考了 [cognee](https://www.cognee.ai)；
+本项目用 Rust 重新实现的正是这套方案。
 cognee 采用 [Apache License 2.0](https://github.com/topoteretes/cognee/blob/main/LICENSE)
 （Copyright 2024 Topoteretes UG）。`reflect-mem` 是独立实现，不打包 cognee 源码。
 详见 [NOTICE](NOTICE)。

@@ -15,8 +15,8 @@
 </div>
 
 `reflect-mem` gives an AI agent a memory that survives the conversation. It speaks the Model Context
-Protocol, so any MCP-capable client can point at it and get three tools: `remember` stores a fact, `recall`
-answers a question from what it has stored, and `forget` deletes it.
+Protocol, so any MCP-capable client can point at it and get three tools: `remember` to store a fact,
+`recall` to answer a question from stored memory, and `forget` to delete it.
 
 It is one Rust binary plus a directory of files you own — SQLite for the knowledge graph and metadata,
 LanceDB for embeddings. No cloud service, no Python runtime, no external database.
@@ -79,7 +79,7 @@ Retrieval has two modes: **`SUMMARIES`** for fast lookups over summarized memory
 { "name": "forget", "arguments": { "dataset": "main_dataset" } }
 ```
 
-`SUMMARIES` returns the closest pre-computed summaries — cheap, and usually enough. `GRAPH_COMPLETION`
+`SUMMARIES` returns the closest pre-computed summaries — cheap, and usually sufficient. `GRAPH_COMPLETION`
 seeds from the same vector index, then walks the knowledge graph out to `hops` and synthesises an answer;
 that is what you want when no single memory holds the answer on its own.
 
@@ -109,8 +109,8 @@ that is what you want when no single memory holds the answer on its own.
                      └──────────────────────┘
 ```
 
-Ingestion turns text into three things — `DocumentChunk` nodes, the entities and relations extracted from
-them, and a summary per chunk. Retrieval reads back whichever of those answers the question best.
+Ingestion produces three kinds of records — `DocumentChunk` nodes, the entities and relations extracted from
+them, and a summary per chunk. Retrieval reads back whichever kind answers the question best.
 
 All external dependencies are plain HTTP. Only the LLM and embedding endpoints are contacted; everything
 else stays on disk.
@@ -439,7 +439,7 @@ Dockerfile / .dockerignore    container image
 
 ## Contributing
 
-Issues and pull requests are welcome. The same three checks CI runs:
+Issues and pull requests are welcome. CI runs the same three checks:
 
 ```bash
 cargo fmt --all
