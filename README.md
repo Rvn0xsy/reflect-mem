@@ -181,9 +181,13 @@ LLM_API_KEY=sk-... reflect-mem mcp
 
 Point at a different file with `--config /path/to/config.toml` or `$REFLECT_MEM_CONFIG`.
 
-> `embedding.model` and `embedding.dimensions` have to stay stable once you have stored anything:
-> vectors from different models are not comparable, so changing either makes existing embeddings
-> unreadable.
+> [!WARNING]
+> **Pick your embedding model before you store anything.** Vectors from different models are not
+> comparable. Changing `embedding.dimensions` fails loudly on the next write, but switching to a
+> different model *with the same dimensions* does not — it silently leaves every existing memory
+> unsearchable. There is no re-embed command, and `remember` is idempotent (the same text is a no-op),
+> so recovering means clearing the store with `forget --everything` and re-ingesting the source texts
+> kept under `data/text_*.txt`.
 
 ### 3. Serve over MCP
 
@@ -322,7 +326,7 @@ The config file defaults to `<data_root>/config.toml`; override the path with `-
 | `llm.args` | `LLM_ARGS` | `{}` | Extra request fields (e.g. `{ reasoning_split = true }`) |
 | `llm.thinking` | `LLM_THINKING` | *(unset)* | `disabled` skips chain-of-thought; `adaptive`/unset keeps it on |
 | `embedding.endpoint` | `EMBEDDING_ENDPOINT` | `http://localhost:11434/api/embed` | Ollama `/api/embed` or any OpenAI-compatible `/v1/embeddings` (`host.docker.internal` auto-rewritten outside Docker) |
-| `embedding.model` | `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | Any embedding model |
+| `embedding.model` | `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | Any embedding model — see the warning under [Quick start](#quick-start) |
 | `embedding.dimensions` | `EMBEDDING_DIMENSIONS` | `1024` | Must match that model |
 | `embedding.api_key` | `EMBEDDING_API_KEY` | *(unset)* | Sent as `Authorization: Bearer`; most hosted APIs need it |
 | `embedding.headers` | — | `{}` | Extra request headers, for providers that do not use Bearer |

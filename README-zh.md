@@ -172,8 +172,11 @@ LLM_API_KEY=sk-... reflect-mem mcp
 
 用 `--config /path/to/config.toml` 或 `$REFLECT_MEM_CONFIG` 指定其它配置文件。
 
-> `embedding.model` 与 `embedding.dimensions` 一旦存入了数据就不要再改：不同模型的向量不可比较，
-> 改动任何一个都会让已存的 embedding 失效。
+> [!WARNING]
+> **在存入任何数据之前就要定好 embedding 模型。** 不同模型的向量不可比较。改
+> `embedding.dimensions` 会在下次写入时直接报错，但换成**另一个维度相同的模型不会报错** —— 它会静默地
+> 让所有已有记忆检索不到。项目没有 re-embed 命令，而 `remember` 又是幂等的（同一段文本是空操作），
+> 所以要恢复只能先用 `forget --everything` 清空，再用 `data/text_*.txt` 里保留的源文本重新灌入。
 
 ### 3. 以 MCP 方式提供服务
 
@@ -312,7 +315,7 @@ docker run --rm -p 127.0.0.1:8080:8080 -v "$HOME/.agents/reflect-mem:/data" \
 | `llm.args` | `LLM_ARGS` | `{}` | 额外请求字段（如 `{ reasoning_split = true }`） |
 | `llm.thinking` | `LLM_THINKING` | *(未设置)* | `disabled` 跳过 chain-of-thought；`adaptive`/未设置则保持开启 |
 | `embedding.endpoint` | `EMBEDDING_ENDPOINT` | `http://localhost:11434/api/embed` | Ollama `/api/embed`，或任意 OpenAI 兼容的 `/v1/embeddings`（非 Docker 环境下 `host.docker.internal` 会被自动改写） |
-| `embedding.model` | `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | 任意 embedding 模型 |
+| `embedding.model` | `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | 任意 embedding 模型 —— 见[快速开始](#快速开始)里的警告 |
 | `embedding.dimensions` | `EMBEDDING_DIMENSIONS` | `1024` | 必须与该模型一致 |
 | `embedding.api_key` | `EMBEDDING_API_KEY` | *(未设置)* | 作为 `Authorization: Bearer` 发送；托管服务基本都需要 |
 | `embedding.headers` | — | `{}` | 额外请求头，用于不用 Bearer 认证的服务 |
