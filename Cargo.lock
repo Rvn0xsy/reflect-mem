@@ -4569,7 +4569,7 @@ dependencies = [
 
 [[package]]
 name = "reflect-mem"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "arrow-array",
