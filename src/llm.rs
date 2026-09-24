@@ -26,34 +26,55 @@ struct Choice {
 struct Message {
     #[serde(default)]
     content: Option<String>,
-    /// MiniMax returns reasoning separately when `reasoning_split` is on; we
-    /// fall back to it only if `content` is empty.
+    /// Chain-of-thought, when the provider returns it as its own field (MiniMax
+    /// with `reasoning_split`). Kept for diagnostics only — it is never the
+    /// answer, so it is never surfaced as one.
     #[serde(default)]
     reasoning_content: Option<String>,
 }
 
 impl Message {
-    fn text(&self) -> Option<String> {
-        let raw = self
-            .content
+    /// The assistant's answer, with any inline chain-of-thought removed.
+    ///
+    /// `None` when the model produced no answer at all, so callers report that
+    /// instead of showing the user the model's private reasoning.
+    fn answer(&self) -> Option<String> {
+        let answer = strip_reasoning(self.content.as_deref().unwrap_or_default());
+        (!answer.is_empty()).then_some(answer)
+    }
+
+    /// True when the message carried reasoning but no answer — a retry, or
+    /// `LLM_THINKING=disabled`, is what fixes it.
+    fn reasoning_only(&self) -> bool {
+        let had_reasoning = self
+            .reasoning_content
             .as_ref()
-            .filter(|c| !c.trim().is_empty())
-            .or(self.reasoning_content.as_ref())?;
-        Some(strip_reasoning(raw))
+            .is_some_and(|r| !r.trim().is_empty())
+            || self.content.as_deref().is_some_and(has_reasoning);
+        had_reasoning && self.answer().is_none()
     }
 }
 
-/// MiniMax M2.x is a reasoning model: unless `reasoning_split` is requested it
-/// emits its chain of thought inline, terminated by `</think>`, ahead of the
-/// real answer. Keep only what follows that marker.
+/// Extract the answer from a reply that may carry inline chain-of-thought.
+///
+/// MiniMax M2/M3 emit their reasoning inline, terminated by `</think>`, ahead
+/// of the real answer. A reply that is *only* reasoning yields an empty string,
+/// so a truncated or reasoning-only turn is reported as missing rather than
+/// being handed to the user as the answer.
 fn strip_reasoning(text: &str) -> String {
     if let Some(idx) = text.rfind("</think>") {
-        let tail = text[idx + "</think>".len()..].trim();
-        if !tail.is_empty() {
-            return tail.to_string();
-        }
+        return text[idx + "</think>".len()..].trim().to_string();
+    }
+    // Opening marker with no terminator: reasoning cut off mid-stream.
+    if text.trim_start().starts_with("<think>") {
+        return String::new();
     }
     text.trim().to_string()
+}
+
+/// Does this text carry chain-of-thought markers?
+fn has_reasoning(text: &str) -> bool {
+    text.contains("<think>") || text.contains("</think>")
 }
 
 /// Chat-completions client.
@@ -155,12 +176,22 @@ impl LlmClient {
         }
 
         let parsed: ChatResponse = resp.json().await.context("parsing LLM response")?;
-        parsed
+        let message = parsed
             .choices
             .into_iter()
             .next()
-            .and_then(|c| c.message.text())
-            .context("LLM response contained no message content")
+            .context("LLM returned no choices")?
+            .message;
+        if let Some(answer) = message.answer() {
+            return Ok(answer);
+        }
+        if message.reasoning_only() {
+            bail!(
+                "the LLM returned reasoning but no answer — retry, or set LLM_THINKING=disabled \
+                 to stop it emitting a chain-of-thought"
+            );
+        }
+        bail!("the LLM returned an empty message")
     }
 }
 
@@ -180,8 +211,38 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_when_only_reasoning_is_present() {
-        assert_eq!(strip_reasoning("思考中</think>"), "思考中</think>");
+    fn reasoning_only_yields_no_answer() {
+        // Regression: these used to be returned verbatim, leaking the model's
+        // private chain-of-thought to the user as if it were the answer.
+        assert_eq!(strip_reasoning("思考中</think>"), "");
+        assert_eq!(strip_reasoning("<think>思考到一半被截断"), "");
+
+        let m = Message {
+            content: Some("<think>thinking</think>".into()),
+            reasoning_content: None,
+        };
+        assert_eq!(m.answer(), None);
+        assert!(m.reasoning_only());
+    }
+
+    #[test]
+    fn separate_reasoning_field_is_never_the_answer() {
+        let m = Message {
+            content: Some(String::new()),
+            reasoning_content: Some("only thinking here".into()),
+        };
+        assert_eq!(m.answer(), None);
+        assert!(m.reasoning_only());
+    }
+
+    #[test]
+    fn an_answer_is_preferred_over_separate_reasoning() {
+        let m = Message {
+            content: Some("the answer".into()),
+            reasoning_content: Some("the thinking".into()),
+        };
+        assert_eq!(m.answer().as_deref(), Some("the answer"));
+        assert!(!m.reasoning_only());
     }
 
     #[test]
