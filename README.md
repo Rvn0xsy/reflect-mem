@@ -324,7 +324,7 @@ The config file defaults to `<data_root>/config.toml`; override the path with `-
 | `llm.model` | `LLM_MODEL` | `MiniMax-M2.7-highspeed` | Model id (an `openai/` prefix is stripped) |
 | `llm.api_key` | `LLM_API_KEY` | — | Required |
 | `llm.args` | `LLM_ARGS` | `{}` | Extra request fields (e.g. `{ reasoning_split = true }`) |
-| `llm.thinking` | `LLM_THINKING` | *(unset)* | `disabled` skips chain-of-thought; `adaptive`/unset keeps it on |
+| `llm.thinking` | `LLM_THINKING` | *(unset)* | `disabled` skips chain-of-thought — the one value MiniMax and DeepSeek both accept; anything else sends no `thinking` field, keeping the provider default (on) |
 | `embedding.endpoint` | `EMBEDDING_ENDPOINT` | `http://localhost:11434/api/embed` | Ollama `/api/embed` or any OpenAI-compatible `/v1/embeddings` (`host.docker.internal` auto-rewritten outside Docker) |
 | `embedding.model` | `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | Any embedding model — see the warning under [Quick start](#quick-start) |
 | `embedding.dimensions` | `EMBEDDING_DIMENSIONS` | `1024` | Must match that model |

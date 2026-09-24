@@ -313,7 +313,7 @@ docker run --rm -p 127.0.0.1:8080:8080 -v "$HOME/.agents/reflect-mem:/data" \
 | `llm.model` | `LLM_MODEL` | `MiniMax-M2.7-highspeed` | 模型 id（`openai/` 前缀会被剥掉） |
 | `llm.api_key` | `LLM_API_KEY` | — | 必填 |
 | `llm.args` | `LLM_ARGS` | `{}` | 额外请求字段（如 `{ reasoning_split = true }`） |
-| `llm.thinking` | `LLM_THINKING` | *(未设置)* | `disabled` 跳过 chain-of-thought；`adaptive`/未设置则保持开启 |
+| `llm.thinking` | `LLM_THINKING` | *(未设置)* | `disabled` 跳过 chain-of-thought —— 这是 MiniMax 与 DeepSeek 唯一共同接受的值；其它值不下发 `thinking` 字段，保持厂商默认（开启） |
 | `embedding.endpoint` | `EMBEDDING_ENDPOINT` | `http://localhost:11434/api/embed` | Ollama `/api/embed`，或任意 OpenAI 兼容的 `/v1/embeddings`（非 Docker 环境下 `host.docker.internal` 会被自动改写） |
 | `embedding.model` | `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | 任意 embedding 模型 —— 见[快速开始](#快速开始)里的警告 |
 | `embedding.dimensions` | `EMBEDDING_DIMENSIONS` | `1024` | 必须与该模型一致 |

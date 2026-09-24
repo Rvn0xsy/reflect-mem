@@ -14,7 +14,10 @@ data_root = "~/.agents/reflect-mem"
 endpoint = "https://api.minimaxi.com/v1"
 model = "MiniMax-M3"            # or "MiniMax-M2.7-highspeed"
 api_key = "sk-..."              # or export LLM_API_KEY
-thinking = "adaptive"           # "disabled" skips chain-of-thought (faster)
+# Turn chain-of-thought off — the one value MiniMax and DeepSeek both accept.
+# Anything else (or leaving it unset) sends no `thinking` field at all, which
+# keeps requests valid for providers that do not have the parameter.
+# thinking = "disabled"
 # Extra request fields, merged verbatim into the JSON payload.
 # args = { reasoning_split = true }
 

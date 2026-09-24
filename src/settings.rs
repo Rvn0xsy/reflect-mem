@@ -155,9 +155,17 @@ fn default_data_root() -> PathBuf {
     PathBuf::from(home).join(DEFAULT_DATA_ROOT_DIR)
 }
 
-/// Map a `thinking` value to a boolean. `disabled` / `off` / `false` / `none`
-/// turn chain-of-thought off; anything else (empty, `adaptive`, `on`) keeps the
-/// provider default.
+/// Map a `thinking` value to a boolean.
+///
+/// Providers disagree about the *enabled* spelling (MiniMax wants `adaptive`,
+/// DeepSeek `enabled`, and MiniMax answers 400 for anything outside
+/// `adaptive|disabled`) but agree on `disabled`. So we only ever send the
+/// intersection: `disabled` turns thinking off, and anything else leaves the
+/// field out entirely and lets each provider keep its own default. That also
+/// keeps the request valid for providers with no `thinking` parameter at all.
+///
+/// `disabled` / `off` / `false` / `none` turn thinking off; everything else
+/// (empty, `adaptive`, `enabled`, `on`) omits the field.
 fn thinking_disabled(raw: &str) -> bool {
     matches!(
         raw.trim().to_ascii_lowercase().as_str(),
@@ -329,6 +337,18 @@ mod tests {
         for v in ["", "adaptive", "on", "true", "enabled", "garbage"] {
             assert!(!thinking_disabled(v), "{v:?} should keep thinking on");
         }
+    }
+
+    /// Only `disabled` may reach the wire: it is the one value MiniMax and
+    /// DeepSeek agree on. MiniMax rejects the others with HTTP 400
+    /// (`allowed: adaptive, disabled`), so a provider-specific "on" spelling
+    /// must never be sent.
+    #[test]
+    fn only_disabled_is_ever_sent() {
+        for v in ["adaptive", "enabled", "on", "true", ""] {
+            assert!(!thinking_disabled(v), "{v:?} must omit the thinking field");
+        }
+        assert!(thinking_disabled("disabled"));
     }
 
     #[test]
