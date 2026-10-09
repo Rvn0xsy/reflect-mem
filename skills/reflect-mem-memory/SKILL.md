@@ -78,14 +78,22 @@ Behaviour:
   **slow** (seconds to tens of seconds per chunk) and writes real data to disk.
 - **Only `data` exists.** There is no file ingestion, no session-cache staging, and no background async ingest mode
   in these tools — write the facts as text yourself.
-- **Idempotent by content hash** — storing the same text into the same dataset is a no-op and returns
+- **Idempotent per (dataset, content)** — but only for a write that actually landed: the check asks whether the
+  graph still holds content for that item. On a landed write the same text returns
   `Already stored (dataset=…, data_id=…)`.
+- **A half-finished write heals itself** — if an earlier attempt failed after the row was written (extraction,
+  summarization or embedding error), the same text is *not* skipped: it is re-ingested **in place**, under the same
+  `data_id`, and the call returns `Re-ingested in place (dataset=…, data_id=…)`. So when memory looks empty after a
+  failure, send the text again instead of rewording it.
 - Success returns a report: `Stored in dataset 'main_dataset': 1 chunk(s), +7 graph nodes, +39 edges, 21 vectors.
   data_id=e4988f9a-…`. **Note that `data_id`** — it is what you pass to `forget`.
 
 **Gotcha — `extraction returned no nodes`:** the extractor can fail on prose-y, prompt-like, or loosely structured
-text. It is not fatal and not a memory corruption — just rewrite the content as short, explicit, declarative sentences
-(one fact per sentence, name the entities directly) and call `remember` again. Example of what works:
+text. It is not fatal and not a memory corruption: the row is stored, the graph holds nothing for it, and
+`doctor --audit` lists exactly those rows as "without graph content". Call `remember` again with **the same text** —
+it repairs that item in place (same `data_id`, no duplicate) instead of reporting `Already stored`. Rewording as
+short, explicit, declarative sentences (one fact per sentence, name the entities directly) still helps the extractor
+succeed. Example of what works:
 
 ```
 示例用户的博客主站是 blog.example.com。

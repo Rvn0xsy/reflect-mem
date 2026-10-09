@@ -185,9 +185,10 @@ Point at a different file with `--config /path/to/config.toml` or `$REFLECT_MEM_
 > **Pick your embedding model before you store anything.** Vectors from different models are not
 > comparable. Changing `embedding.dimensions` fails loudly on the next write, but switching to a
 > different model *with the same dimensions* does not — it silently leaves every existing memory
-> unsearchable. There is no re-embed command, and `remember` is idempotent (the same text is a no-op),
-> so recovering means clearing the store with `forget --everything` and re-ingesting the source texts
-> kept under `data/text_*.txt`.
+> unsearchable. There is no re-embed command; switching back to the original model plus
+> `doctor --heal-vectors` only fills rows that are **missing**, so anything embedded with the wrong
+> model has to be `forget`-ed and re-ingested — and since the source text is no longer kept on disk
+> (§14 of the design doc), keep your own copy of text you cannot afford to lose.
 
 ### 3. Serve over MCP
 
@@ -299,7 +300,7 @@ docker run --rm -p 127.0.0.1:8080:8080 -v "$HOME/.agents/reflect-mem:/data" \
 | `recall <query>` | Search memory and synthesise an answer (`--search-type`, `--top-k`, `--hops`) |
 | `remember --data <text>` | Store permanent memory (extract entities, write graph + vectors) |
 | `forget --data-id <uuid>` \| `--dataset <name>` \| `--everything` | Delete memory |
-| `doctor [--dump <dir>] [--heal-vectors]` | Repair the store: restore nodes from a dump and/or re-embed missing vectors |
+| `doctor [--audit] [--dump <dir>] [--heal-vectors]` | `--audit` cross-checks data rows ↔ graph provenance ↔ legacy source-text files and reports without changing anything; otherwise repair the store (restore nodes from a dump and/or re-embed missing vectors) |
 | `mcp --transport stdio` | Serve the memory API over stdio |
 | `mcp --transport streamable-http --bind <addr> --token <t>` | Serve over HTTP at `/mcp`, requiring `Authorization: Bearer <t>` |
 
@@ -402,9 +403,9 @@ safe to copy, back up or move as a whole:
 <DATA_ROOT>/
   system/databases/
     reflect-mem.sqlite         # datasets, data rows, pipeline status
-    reflect-mem.graph.sqlite   # knowledge graph (nodes / edges)
+    reflect-mem.graph.sqlite   # knowledge graph (nodes / edges; also holds chunk text)
     reflect-mem.lancedb/       # embeddings
-  data/text_<hash>.txt         # source text, content-addressed
+  data/text_<hash>.txt         # legacy source text — no longer written (§14)
 ```
 
 Point `DATA_ROOT` at an existing directory to pick up where you left off — stores are opened in place, not

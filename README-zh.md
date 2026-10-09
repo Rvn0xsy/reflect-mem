@@ -175,8 +175,9 @@ LLM_API_KEY=sk-... reflect-mem mcp
 > [!WARNING]
 > **在存入任何数据之前就要定好 embedding 模型。** 不同模型的向量不可比较。改
 > `embedding.dimensions` 会在下次写入时直接报错，但换成**另一个维度相同的模型不会报错** —— 它会静默地
-> 让所有已有记忆检索不到。项目没有 re-embed 命令，而 `remember` 又是幂等的（同一段文本是空操作），
-> 所以要恢复只能先用 `forget --everything` 清空，再用 `data/text_*.txt` 里保留的源文本重新灌入。
+> 让所有已有记忆检索不到。项目没有 re-embed 命令；切回原模型再跑 `doctor --heal-vectors` 只能补**缺失**的行，
+> 已用错误模型写入的向量只能 `forget` 后重新灌入 —— 而源文本已不再落盘（见设计文档 §14），
+> 所以请自己留存你丢失不起的文本。
 
 ### 3. 以 MCP 方式提供服务
 
@@ -288,7 +289,7 @@ docker run --rm -p 127.0.0.1:8080:8080 -v "$HOME/.agents/reflect-mem:/data" \
 | `recall <query>` | 检索记忆并综合答案（`--search-type`、`--top-k`、`--hops`） |
 | `remember --data <text>` | 存永久记忆（抽取实体，写图 + 向量） |
 | `forget --data-id <uuid>` \| `--dataset <name>` \| `--everything` | 删除记忆 |
-| `doctor [--dump <dir>] [--heal-vectors]` | 修复存储：从 dump 恢复节点，和/或补齐缺失的向量 |
+| `doctor [--audit] [--dump <dir>] [--heal-vectors]` | `--audit` 只读地交叉核对 data 行 ↔ 图溯源 ↔ 历史源文本文件，不改变任何东西；否则修复存储（从 dump 恢复节点，和/或补齐缺失的向量） |
 | `mcp --transport stdio` | 通过 stdio 提供记忆 API |
 | `mcp --transport streamable-http --bind <addr> --token <t>` | 在 `/mcp` 上提供 HTTP 服务，要求 `Authorization: Bearer <t>` |
 
@@ -392,7 +393,7 @@ BENCH_ROOT=/tmp/reflect-mem-bench cargo run --release --bin bench
     reflect-mem.sqlite         # datasets、data 行、流水线状态
     reflect-mem.graph.sqlite   # 知识图谱（节点 / 边）
     reflect-mem.lancedb/       # 向量
-  data/text_<hash>.txt         # 源文本，按内容寻址
+  data/text_<hash>.txt         # 历史源文本，已不再写入（§14）
 ```
 
 把 `DATA_ROOT` 指向一个已有目录即可继续使用 —— 存储是**就地打开**的，不是导入。删除该目录即清空
