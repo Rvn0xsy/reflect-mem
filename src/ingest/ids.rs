@@ -67,6 +67,32 @@ pub fn text_summary_id(chunk_id: Uuid) -> Uuid {
     Uuid::new_v5(&chunk_id, b"TextSummary")
 }
 
+/// Provenance ref stamped on every node/edge one write owns, and the key
+/// `forget` deletes by.
+///
+/// `<dataset_id>` and `<data_id>` are **dashed** uuids here: the relational
+/// store keeps ids dashless (`data.id`), the graph keeps them dashed in
+/// `source_ref_keys`. Callers that read an id from the relational store must
+/// parse it to [`Uuid`] before building the ref, or nothing will match.
+pub fn source_ref_key(dataset_id: &str, data_id: &str) -> String {
+    format!("source_ref:v1:{dataset_id}:{data_id}")
+}
+
+#[cfg(test)]
+mod ref_tests {
+    use super::*;
+
+    #[test]
+    fn source_ref_key_is_dashed() {
+        let ds = Uuid::parse_str("58ab7a91-6767-556d-be2c-624d9c12128d").unwrap();
+        let data = Uuid::parse_str("4f439f5f-5376-4f1b-901c-29ca54b5a5f1").unwrap();
+        assert_eq!(
+            source_ref_key(&ds.to_string(), &data.to_string()),
+            "source_ref:v1:58ab7a91-6767-556d-be2c-624d9c12128d:4f439f5f-5376-4f1b-901c-29ca54b5a5f1"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

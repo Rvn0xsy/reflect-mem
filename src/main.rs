@@ -100,6 +100,10 @@ enum Commands {
     },
     /// Verify and repair store consistency.
     Doctor {
+        /// Report relational ↔ graph ↔ legacy source-text inconsistencies and
+        /// exit without changing anything.
+        #[arg(long, default_value_t = false)]
+        audit: bool,
         /// Directory holding nodes.jsonl (a graph dump) to restore missing nodes from.
         /// Without it, `./dump` is tried and the restore is skipped if absent.
         #[arg(long)]
@@ -262,6 +266,17 @@ async fn main() -> anyhow::Result<()> {
                     "already stored: dataset={} data_id={}",
                     report.dataset, report.data_id
                 );
+            } else if report.repaired_in_place {
+                println!(
+                    "repaired: dataset={} chunks={} +nodes={} +edges={} vectors={} data_id={} \
+                     (earlier write of this exact text had no graph content)",
+                    report.dataset,
+                    report.chunks,
+                    report.graph_nodes,
+                    report.graph_edges,
+                    report.vectors,
+                    report.data_id
+                );
             } else {
                 println!(
                     "stored: dataset={} chunks={} +nodes={} +edges={} vectors={} data_id={}",
@@ -299,7 +314,59 @@ async fn main() -> anyhow::Result<()> {
                 report.datasets_deleted
             );
         }
-        Commands::Doctor { dump, heal_vectors } => {
+        Commands::Doctor {
+            audit,
+            dump,
+            heal_vectors,
+        } => {
+            if audit {
+                let graph = GraphStore::open(&config::graph_db_path())?;
+                let relational = reflect_mem::storage::relational::RelationalStore::open(
+                    &config::relational_db_path(),
+                )?;
+                let report = reflect_mem::doctor::audit(&graph, &relational, &config::text_dir())?;
+                println!(
+                    "audit: {} data items — {} with graph content, {} without",
+                    report.data_items,
+                    report.with_graph_content,
+                    report.without_graph_content.len()
+                );
+                if !report.without_graph_content.is_empty() {
+                    println!(
+                        "\nrows without graph content (re-run `remember` with the same text to repair in place):"
+                    );
+                    for item in &report.without_graph_content {
+                        println!(
+                            "  {}  {:<24} {}  data_id={}",
+                            item.created_at.as_deref().unwrap_or("?"),
+                            item.dataset,
+                            &item.content_hash[..item.content_hash.len().min(10)],
+                            item.data_id
+                        );
+                    }
+                }
+                println!(
+                    "\nlegacy source-text files: {} orphaned (no data row), {} referenced but missing",
+                    report.orphan_text_files.len(),
+                    report.missing_text_files.len()
+                );
+                for path in &report.orphan_text_files {
+                    println!("  orphan:  {}", path.display());
+                }
+                for item in &report.missing_text_files {
+                    println!(
+                        "  missing: {}  {}  data_id={}",
+                        item.created_at.as_deref().unwrap_or("?"),
+                        item.dataset,
+                        item.data_id
+                    );
+                }
+                if report.is_clean() {
+                    println!("\nnothing to report: stores are consistent");
+                }
+                return Ok(());
+            }
+
             let graph = GraphStore::open(&config::graph_db_path())?;
             let explicit_dump = dump.is_some();
             let dump = dump.unwrap_or_else(|| PathBuf::from("./dump"));

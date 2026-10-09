@@ -2,23 +2,27 @@
 //!
 //! Mirrors the ingestion pipeline end to end (design doc §13.2):
 //!
-//! 1. store the source text (`data/text_<md5>.txt`) and the `data` row
+//! 1. write the `data` row (the source text itself is **not** kept on disk —
+//!    the chunked text in the graph is the only copy)
 //! 2. chunk the text
 //! 3. per chunk: LLM-extract a KnowledgeGraph, LLM-summarize
 //! 4. build DataPoints (TextDocument / DocumentChunk / TextSummary / Entity /
 //!    EntityType) with deterministic ids
 //! 5. write graph nodes + edges, then embeddings into the Lance tables
 //!
-//! Re-ingesting the same text is a no-op: the content hash short-circuits, and
-//! entity ids are name-derived so re-extraction merges into existing nodes.
+//! Re-ingesting the same text is a no-op **once it has actually landed**: the
+//! content hash plus a provenance check against the graph short-circuits, and
+//! entity ids are name-derived so re-extraction merges into existing nodes. If
+//! an earlier attempt left the row without graph content (extraction or
+//! embedding failed halfway), the retry repairs that item in place instead of
+//! reporting "already stored".
 
 use std::collections::HashMap;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
-use crate::config;
 use crate::embed::EmbeddingClient;
 use crate::ingest::chunk::{self, Chunk};
 use crate::ingest::datapoints::{self, Datapoint};
@@ -81,7 +85,11 @@ pub struct RememberReport {
     pub graph_nodes: usize,
     pub graph_edges: usize,
     pub vectors: usize,
+    /// The same content is already stored **and** its graph content is present.
     pub skipped_existing: bool,
+    /// The same content was stored before, but that write left no graph content;
+    /// this call re-ingested it in place under the same `data_id`.
+    pub repaired_in_place: bool,
 }
 
 fn md5_hex(data: &str) -> String {
@@ -113,59 +121,70 @@ pub async fn remember(
 
     progress.stage("hashing content");
     let content_hash = md5_hex(data);
-
-    // 1. idempotency: same content into the same dataset is a no-op
-    progress.stage("checking for existing content");
-    if let Some(existing) = relational.find_data_by_hash(dataset_name, &content_hash)? {
-        // The store keeps ids dashless; report the canonical dashed form so
-        // this path and the fresh-write path print the same shape.
-        let data_id = Uuid::parse_str(&existing)
-            .map(|u| u.to_string())
-            .unwrap_or(existing);
-        return Ok(RememberReport {
-            dataset: dataset_name.to_string(),
-            data_id,
-            content_hash,
-            chunks: 0,
-            graph_nodes: 0,
-            graph_edges: 0,
-            vectors: 0,
-            skipped_existing: true,
-        });
-    }
-
-    // 2. persist source text + relational rows
-    progress.stage("writing source text");
-    let text_file = config::text_dir().join(format!("text_{content_hash}.txt"));
-    std::fs::create_dir_all(config::text_dir())?;
-    std::fs::write(&text_file, data)
-        .with_context(|| format!("writing source text {}", text_file.display()))?;
-
-    let data_id = Uuid::new_v4();
     let run_id = Uuid::new_v4();
-    progress.stage("ensuring dataset + data row");
-    let dataset_id = relational.ensure_dataset(dataset_name)?;
-    progress.stage("inserting data row");
-    relational.insert_data(&DataInsert {
-        id: data_id,
-        name: &format!("text_{content_hash}"),
-        mime_type: "text/plain",
-        extension: "txt",
-        raw_data_location: &format!(
-            "file://{}",
-            text_file
-                .canonicalize()
-                .unwrap_or(text_file.clone())
-                .display()
-        ),
-        dataset_id,
-        owner_id: relational.default_user_id()?,
-        content_hash: &content_hash,
-        raw_content_hash: &content_hash,
-        token_count: chunk::estimate_tokens(data) as i64,
-        data_size: data.len() as i64,
-        run_id,
-    })?;
+
+    // 1. idempotency — but only for a write that actually finished.
+    //
+    // The content hash alone is not enough: a write that failed after the
+    // relational row landed (extraction, summarization or embedding error)
+    // leaves a row with no graph content, and calling that "already stored"
+    // would make the same text impossible to store again. So an existing row is
+    // checked against the graph's provenance refs, and a half-finished write is
+    // repaired in place under the same `data_id`.
+    //
+    // `pipeline_status` is deliberately not the judge here: rows have been
+    // observed claiming DATA_ITEM_PROCESSING_COMPLETED with no graph content at
+    // all, so only the graph is authoritative.
+    progress.stage("checking for existing content");
+    let (data_id, dataset_id, repaired_in_place) =
+        match relational.find_data_by_hash(dataset_name, &content_hash)? {
+            Some(existing) => {
+                let data_id = existing.data_id()?;
+                let dataset_id = existing.dataset_uuid()?;
+                let ref_key = ids::source_ref_key(&dataset_id.to_string(), &data_id.to_string());
+                if ctx.graph.has_nodes_with_source_ref(&ref_key)? {
+                    return Ok(RememberReport {
+                        dataset: dataset_name.to_string(),
+                        data_id: data_id.to_string(),
+                        content_hash,
+                        chunks: 0,
+                        graph_nodes: 0,
+                        graph_edges: 0,
+                        vectors: 0,
+                        skipped_existing: true,
+                        repaired_in_place: false,
+                    });
+                }
+                progress.stage(
+                    "previous write left no graph content — re-ingesting the same text in place",
+                );
+                (data_id, dataset_id, true)
+            }
+            None => {
+                // 2. relational rows only. The source-text file is retired: the
+                //    chunked text in the graph is the only copy of the content.
+                let data_id = Uuid::new_v4();
+                let dataset_id = relational.ensure_dataset(dataset_name)?;
+                progress.stage("inserting data row");
+                relational.insert_data(&DataInsert {
+                    id: data_id,
+                    name: &format!("text_{content_hash}"),
+                    mime_type: "text/plain",
+                    extension: "txt",
+                    // Logical source name, not a path: this is the same
+                    // identifier the TextDocument node carries as its name.
+                    raw_data_location: &format!("text_{content_hash}"),
+                    dataset_id,
+                    owner_id: relational.default_user_id()?,
+                    content_hash: &content_hash,
+                    raw_content_hash: &content_hash,
+                    token_count: chunk::estimate_tokens(data) as i64,
+                    data_size: data.len() as i64,
+                    run_id,
+                })?;
+                (data_id, dataset_id, false)
+            }
+        };
 
     // 3. chunk
     progress.stage("chunking");
@@ -250,6 +269,7 @@ pub async fn remember(
         graph_edges: (graph.edge_count()? - before_edges) as usize,
         vectors: written,
         skipped_existing: false,
+        repaired_in_place,
     })
 }
 
@@ -278,7 +298,7 @@ fn build_datapoints(
         &["name"],
         doc_name.to_string(),
         vec![
-            ("raw_data_location", json!(format!("file://{}", doc_name))),
+            ("raw_data_location", json!(doc_name)),
             ("external_metadata", Value::Null),
             ("mime_type", json!("text/plain")),
         ],

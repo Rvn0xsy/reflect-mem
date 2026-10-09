@@ -356,6 +356,19 @@ impl MemoryServer {
                 report.dataset, report.data_id
             ));
         }
+        if report.repaired_in_place {
+            return Ok(format!(
+                "Re-ingested in place (dataset={}, data_id={}): the earlier write of this exact \
+                 text had left no graph content, so it was repaired rather than skipped — \
+                 {} chunk(s), +{} graph nodes, +{} edges, {} vectors.",
+                report.dataset,
+                report.data_id,
+                report.chunks,
+                report.graph_nodes,
+                report.graph_edges,
+                report.vectors
+            ));
+        }
         Ok(format!(
             "Stored in dataset '{}': {} chunk(s), +{} graph nodes, +{} edges, {} vectors. \
              data_id={}",

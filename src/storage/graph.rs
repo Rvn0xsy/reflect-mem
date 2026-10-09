@@ -525,6 +525,43 @@ impl GraphStore {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// True when at least one node carries this provenance ref, i.e. the write
+    /// that owns it actually landed in the graph.
+    ///
+    /// `remember` uses this to tell a finished write (same content already
+    /// stored → idempotent no-op) from a half-finished one (the relational row
+    /// exists but no graph content ever landed → the retry must repair in place
+    /// instead of reporting "already stored").
+    ///
+    /// `source_ref_keys` is matched as a substring and has no index, so this
+    /// keeps `LIMIT 1`; it runs at most once per write, and only when the
+    /// content hash already exists.
+    pub fn has_nodes_with_source_ref(&self, ref_key: &str) -> Result<bool> {
+        let conn = self.conn();
+        let hit: Option<i64> = conn
+            .query_row(
+                "SELECT 1 FROM graph_nodes WHERE source_ref_keys LIKE '%' || ?1 || '%' LIMIT 1",
+                params![ref_key],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(hit.is_some())
+    }
+
+    /// Every `source_ref_keys` string stored on nodes and edges, one row per
+    /// node/edge. Callers parse the `|ref|ref|` encoding; `doctor --audit` uses
+    /// it to build the set of refs that have content.
+    pub fn all_source_ref_keys(&self) -> Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT source_ref_keys FROM graph_nodes WHERE source_ref_keys IS NOT NULL
+             UNION ALL
+             SELECT source_ref_keys FROM graph_edges WHERE source_ref_keys IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// All edges carrying a provenance ref.
     pub fn edges_with_source_ref(&self, ref_key: &str) -> Result<Vec<GraphEdge>> {
         let sql = format!(
@@ -787,5 +824,43 @@ mod tests {
             Some("1")
         );
         assert_eq!(g.metadata("missing").unwrap(), None);
+    }
+
+    /// `remember` asks this before declaring the same content "already stored":
+    /// a ref with no node behind it means the earlier write never landed.
+    #[test]
+    fn has_nodes_with_source_ref_distinguishes_landed_writes() {
+        let g = GraphStore::open_in_memory().unwrap();
+        let mut n = node("chunk-1", "chunk 1", "DocumentChunk");
+        n.source_ref_keys = Some("|source_ref:v1:ds-1:data-1|".into());
+        g.insert_nodes(&[n]).unwrap();
+
+        assert!(
+            g.has_nodes_with_source_ref("source_ref:v1:ds-1:data-1")
+                .unwrap()
+        );
+        assert!(
+            !g.has_nodes_with_source_ref("source_ref:v1:ds-1:data-2")
+                .unwrap()
+        );
+    }
+
+    /// The audit parses this list, so it must carry nodes *and* edges.
+    #[test]
+    fn all_source_ref_keys_covers_nodes_and_edges() {
+        let g = GraphStore::open_in_memory().unwrap();
+        let mut a = node("a", "A", "Entity");
+        a.source_ref_keys = Some("|source_ref:v1:ds-1:data-1|".into());
+        let mut b = node("b", "B", "Entity");
+        b.source_ref_keys = Some("|source_ref:v1:ds-1:data-1|".into());
+        let mut e = edge("a", "b", "is_a");
+        e.source_ref_keys = Some("|source_ref:v1:ds-1:data-2|".into());
+        g.insert_nodes(&[a, b]).unwrap();
+        g.insert_edges(&[e]).unwrap();
+
+        let refs = g.all_source_ref_keys().unwrap();
+        let joined = refs.join("");
+        assert!(joined.contains("data-1"));
+        assert!(joined.contains("data-2"));
     }
 }

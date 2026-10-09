@@ -1,8 +1,12 @@
 //! Data-root layout.
 //!
-//! We reuse the existing data root in place: source text, `reflect-mem.sqlite`
-//! (relational) and `reflect-mem.lancedb` (vectors) are read where they already
-//! are. Only the graph is migrated, into `reflect-mem.graph.sqlite` beside them.
+//! We reuse the existing data root in place: `reflect-mem.sqlite` (relational)
+//! and `reflect-mem.lancedb` (vectors) are read where they already are. Only
+//! the graph is migrated, into `reflect-mem.graph.sqlite` beside them.
+//!
+//! The source-text files under `data/` are legacy: writes stopped when the
+//! chunked text in the graph became the single copy. `doctor --audit` still
+//! looks at that directory so leftovers can be found and deleted.
 //!
 //! The root comes from [`crate::settings`] (config file, then `DATA_ROOT`, then
 //! `~/.agents/reflect-mem`).
@@ -34,7 +38,11 @@ pub fn lancedb_path() -> PathBuf {
     databases_dir().join("reflect-mem.lancedb")
 }
 
-/// Existing content-addressed source text directory.
+/// Legacy content-addressed source-text directory.
+///
+/// No longer written: the chunked text in the graph is the only copy of a
+/// memory's content. Files that are still here are leftovers from before that
+/// change; `doctor --audit` reports the ones nothing references.
 pub fn text_dir() -> PathBuf {
     data_root().join("data")
 }

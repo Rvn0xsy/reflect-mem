@@ -133,7 +133,7 @@ pub async fn forget(
     let mut vector_deletes: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     for (data_id, dataset_id) in &data_items {
-        let ref_key = format!("source_ref:v1:{dataset_id}:{data_id}");
+        let ref_key = ids::source_ref_key(&dataset_id.to_string(), &data_id.to_string());
         report.data_items += 1;
 
         let nodes = graph.nodes_with_source_ref(&ref_key)?;

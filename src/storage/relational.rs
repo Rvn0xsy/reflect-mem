@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -105,6 +105,46 @@ pub struct DataInsert<'a> {
     pub run_id: Uuid,
 }
 
+/// One `data` row plus the dataset it belongs to, with ids exactly as stored
+/// (**dashless**).
+///
+/// The graph stores the same ids **dashed** inside `source_ref_keys`, so a
+/// caller building a provenance ref must go through [`DataRow::data_id`] /
+/// [`DataRow::dataset_uuid`] and [`crate::ingest::ids::source_ref_key`]. Mixing
+/// the two forms silently matches nothing.
+#[derive(Debug, Clone)]
+pub struct DataRow {
+    pub id: String,
+    pub dataset_id: String,
+    pub dataset_name: String,
+    pub content_hash: Option<String>,
+    pub created_at: Option<String>,
+    /// Logical source name for rows written since the source-text file was
+    /// retired (`text_<md5>`); a `file://…` path/URI for legacy rows.
+    pub raw_data_location: Option<String>,
+}
+
+impl DataRow {
+    pub fn data_id(&self) -> Result<Uuid> {
+        parse_dashless(&self.id)
+    }
+
+    pub fn dataset_uuid(&self) -> Result<Uuid> {
+        parse_dashless(&self.dataset_id)
+    }
+}
+
+fn row_to_data_row(r: &Row<'_>) -> rusqlite::Result<DataRow> {
+    Ok(DataRow {
+        id: r.get(0)?,
+        dataset_id: r.get(1)?,
+        dataset_name: r.get(2)?,
+        content_hash: r.get(3)?,
+        created_at: r.get(4)?,
+        raw_data_location: r.get(5)?,
+    })
+}
+
 impl RelationalStore {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)
@@ -189,16 +229,30 @@ impl RelationalStore {
     }
 
     /// Find an existing data id by content hash inside a dataset (idempotency).
-    pub fn find_data_by_hash(&self, dataset_name: &str, hash: &str) -> Result<Option<String>> {
+    pub fn find_data_by_hash(&self, dataset_name: &str, hash: &str) -> Result<Option<DataRow>> {
         self.conn()
             .query_row(
-                "SELECT d.id FROM data d JOIN datasets ds ON ds.id = d.dataset_id
+                "SELECT d.id, d.dataset_id, ds.name, d.content_hash, d.created_at, d.raw_data_location
+                 FROM data d JOIN datasets ds ON ds.id = d.dataset_id
                  WHERE d.content_hash = ?1 AND ds.name = ?2",
                 params![hash, dataset_name],
-                |r| r.get(0),
+                row_to_data_row,
             )
             .optional()
             .context("looking up data by content hash")
+    }
+
+    /// Every `data` row, newest first. `doctor --audit` walks these against the
+    /// graph and the legacy source-text files.
+    pub fn all_data_items(&self) -> Result<Vec<DataRow>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT d.id, d.dataset_id, ds.name, d.content_hash, d.created_at, d.raw_data_location
+             FROM data d JOIN datasets ds ON ds.id = d.dataset_id
+             ORDER BY d.created_at DESC",
+        )?;
+        let rows = stmt.query_map([], row_to_data_row)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     /// Insert the `data` row for one ingestion.
@@ -439,6 +493,49 @@ mod tests {
         let again = RelationalStore::open(&db).unwrap();
         assert_eq!(again.default_user_id().unwrap(), expected);
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Ids come back exactly as stored (dashless) plus the dataset they belong
+    /// to — `remember` needs both to build a provenance ref, and the graph
+    /// expects it dashed.
+    #[test]
+    fn data_rows_expose_ids_and_dataset() {
+        let dir = std::env::temp_dir().join(format!("reflect-mem-datarow-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = RelationalStore::open(&dir.join("reflect-mem.sqlite")).unwrap();
+        let dataset_id = store.ensure_dataset("main_dataset").unwrap();
+        let data_id = Uuid::new_v4();
+        store
+            .insert_data(&DataInsert {
+                id: data_id,
+                name: "text_hash",
+                mime_type: "text/plain",
+                extension: "txt",
+                raw_data_location: "text_hash",
+                owner_id: store.default_user_id().unwrap(),
+                dataset_id,
+                content_hash: "hash",
+                raw_content_hash: "hash",
+                token_count: 3,
+                data_size: 12,
+                run_id: Uuid::new_v4(),
+            })
+            .unwrap();
+
+        let row = store
+            .find_data_by_hash("main_dataset", "hash")
+            .unwrap()
+            .expect("row must be found");
+        assert_eq!(row.data_id().unwrap(), data_id);
+        assert_eq!(row.dataset_uuid().unwrap(), dataset_id);
+        assert_eq!(row.dataset_name, "main_dataset");
+        assert_eq!(row.raw_data_location.as_deref(), Some("text_hash"));
+        assert_eq!(store.all_data_items().unwrap().len(), 1);
+        // unknown dataset, same hash
+        assert!(store.find_data_by_hash("nope", "hash").unwrap().is_none());
+
+        drop(store);
         std::fs::remove_dir_all(&dir).ok();
     }
 }
