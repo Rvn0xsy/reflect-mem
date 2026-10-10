@@ -210,7 +210,7 @@ pub async fn remember(
             t0.elapsed().as_secs_f32()
         ));
         let t1 = std::time::Instant::now();
-        summaries.push(extract::summarize(llm, &c.text).await?);
+        summaries.push(extract::summarize_resilient(llm, &c.text).await?);
         progress.stage(&format!(
             "chunk {}/{}: summarized in {:.1}s",
             i + 1,

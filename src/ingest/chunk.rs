@@ -69,6 +69,28 @@ pub fn chunk_text(text: &str, max_tokens: usize) -> Vec<Chunk> {
     for paragraph in paragraphs.iter() {
         for sentence in sentences(paragraph) {
             let st = estimate_tokens(&sentence);
+            // A "sentence" can be an entire table row or CSV line with no
+            // punctuation — several times the budget. Feeding that to the LLM as
+            // one chunk multiplies both halves of the work: a huge prompt and a
+            // response long enough to be truncated mid-JSON (which is how the
+            // Notion exports kept failing). Cut it down first.
+            if st > max_tokens {
+                if !current.trim().is_empty() {
+                    let cut = if ended_at_paragraph {
+                        "paragraph_end"
+                    } else {
+                        "sentence_end"
+                    };
+                    chunks.push(finish(&current, cut, chunks.len()));
+                    current.clear();
+                    current_tokens = 0;
+                }
+                for piece in split_to_budget(&sentence, max_tokens) {
+                    chunks.push(finish(&piece, "sentence_cut", chunks.len()));
+                }
+                ended_at_paragraph = false;
+                continue;
+            }
             if current_tokens + st > max_tokens && !current.trim().is_empty() {
                 let cut = if ended_at_paragraph {
                     "paragraph_end"
@@ -98,6 +120,31 @@ pub fn chunk_text(text: &str, max_tokens: usize) -> Vec<Chunk> {
         chunks.push(finish(&current, cut, chunks.len()));
     }
     chunks
+}
+
+/// Cut oversized text into pieces whose estimated token count stays within
+/// `max_tokens`. Character based, because [`estimate_tokens`] is: one token per
+/// CJK char, one per four other chars — so this works in quarter-tokens
+/// (CJK = 4, other = 1) to avoid float drift.
+fn split_to_budget(text: &str, max_tokens: usize) -> Vec<String> {
+    let limit = max_tokens * 4;
+    let mut pieces = Vec::new();
+    let mut current = String::new();
+    let mut used = 0usize;
+    for c in text.chars() {
+        let cost = if is_cjk(c) { 4 } else { 1 };
+        if used > 0 && used + cost > limit {
+            pieces.push(std::mem::take(&mut current).trim().to_string());
+            used = 0;
+        }
+        current.push(c);
+        used += cost;
+    }
+    if !current.trim().is_empty() {
+        pieces.push(current.trim().to_string());
+    }
+    pieces.retain(|p| !p.is_empty());
+    pieces
 }
 
 fn finish(text: &str, cut_type: &str, index: usize) -> Chunk {
@@ -140,5 +187,43 @@ mod tests {
     #[test]
     fn empty_text_yields_no_chunks() {
         assert!(chunk_text("  \n\n  ", 1500).is_empty());
+    }
+
+    /// A punctuation-free blob (table row, CSV dump) used to land in one chunk
+    /// whatever its size — the source of oversized LLM prompts and truncated
+    /// responses. It must now be cut to the budget.
+    #[test]
+    fn cuts_oversized_sentences_to_the_budget() {
+        // ~5000 tokens in a single "sentence": no punctuation until the very end.
+        let blob = "甲".repeat(5000) + "。";
+        let chunks = chunk_text(&blob, 1500);
+        assert!(chunks.len() >= 3, "expected the blob to be cut up");
+        for c in &chunks {
+            assert!(
+                estimate_tokens(&c.text) <= 1500 + 200,
+                "chunk {} is {} tokens",
+                c.chunk_index,
+                estimate_tokens(&c.text),
+            );
+        }
+        let kept: usize = chunks.iter().map(|c| c.text.chars().count()).sum();
+        assert_eq!(kept, 5001, "nothing may be dropped");
+    }
+
+    #[test]
+    fn split_to_budget_keeps_cjk_and_ascii_within_budget() {
+        let pieces = split_to_budget(&"甲".repeat(1000), 300);
+        assert_eq!(pieces.len(), 4);
+        for p in &pieces {
+            assert!(
+                estimate_tokens(p) <= 300,
+                "piece is {} tokens",
+                estimate_tokens(p)
+            );
+        }
+        let pieces = split_to_budget(&"x".repeat(4000), 500);
+        for p in &pieces {
+            assert!(estimate_tokens(p) <= 500);
+        }
     }
 }

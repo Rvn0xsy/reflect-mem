@@ -1,7 +1,7 @@
 //! LLM extraction and summarization, using the original prompts and response
 //! schemas.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use crate::llm::LlmClient;
@@ -172,6 +172,12 @@ pub fn first_json_object(raw: &str) -> Option<&str> {
 }
 
 /// Extract a `KnowledgeGraph` from one chunk of text.
+///
+/// An extraction with **no nodes is not an error**: a table of numbers, an index
+/// page or a block of URLs genuinely has no entities to link, and the chunk's
+/// summary is still worth storing (SUMMARIES recall reads summaries, not the
+/// graph). This used to `bail!`, which failed the whole item — the reason the
+/// 2026-08-26 Notion batches never landed.
 pub async fn extract_graph(
     llm: &LlmClient,
     text: &str,
@@ -183,11 +189,7 @@ pub async fn extract_graph(
         })
         .unwrap_or_else(|| EXTRACT_SYSTEM.to_string());
     let raw = llm.complete(&system, text).await?;
-    let graph: ExtractedGraph = parse_loose(&raw)?;
-    if graph.nodes.is_empty() {
-        bail!("extraction returned no nodes");
-    }
-    Ok(graph)
+    parse_loose(&raw)
 }
 
 /// How many times one chunk is extracted before falling back to splitting it.
@@ -224,11 +226,22 @@ fn extract_with_fallback<'a>(
 ) -> ExtractFuture<'a> {
     Box::pin(async move {
         let mut last_err = None;
+        let mut empty = None;
         for _ in 0..EXTRACT_ATTEMPTS {
             match extract_graph(llm, text, custom_prompt).await {
-                Ok(graph) => return Ok(graph),
+                Ok(graph) if !graph.nodes.is_empty() => return Ok(graph),
+                // Keep it, but let a second attempt look for entities before we
+                // settle for "nothing here".
+                Ok(graph) => empty = Some(graph),
                 Err(err) => last_err = Some(err),
             }
+        }
+        if let Some(graph) = empty {
+            eprintln!(
+                "[extract] {} chars yielded no entities — keeping the chunk for its summary",
+                text.chars().count()
+            );
+            return Ok(graph);
         }
         let err = last_err.unwrap_or_else(|| anyhow::anyhow!("extraction failed"));
 
@@ -319,6 +332,54 @@ pub async fn summarize(llm: &LlmClient, text: &str) -> Result<String> {
     let parsed: SummaryResponse = parse_loose(&raw)?;
     Ok(parsed.summary.trim().to_string())
 }
+
+/// Summarize a chunk, surviving the same truncated-JSON failure the extraction
+/// path has.
+///
+/// The summary call is the quieter half of the same problem: it also asks for a
+/// JSON object, and one truncated response used to fail the whole item — the
+/// Notion batches died here after their extraction had already succeeded (no
+/// `chunk N/M: summarized` line, just the parse error). Retry, then summarize
+/// the two halves and join them.
+pub async fn summarize_resilient(llm: &LlmClient, text: &str) -> Result<String> {
+    summarize_with_fallback(llm, text, 0).await
+}
+
+fn summarize_with_fallback<'a>(
+    llm: &'a LlmClient,
+    text: &'a str,
+    depth: usize,
+) -> SummaryFuture<'a> {
+    Box::pin(async move {
+        let mut last_err = None;
+        for _ in 0..EXTRACT_ATTEMPTS {
+            match summarize(llm, text).await {
+                Ok(summary) => return Ok(summary),
+                Err(err) => last_err = Some(err),
+            }
+        }
+        let err = last_err.unwrap_or_else(|| anyhow::anyhow!("summarization failed"));
+        if depth >= EXTRACT_MAX_SPLIT_DEPTH {
+            return Err(err);
+        }
+        let Some((left, right)) = split_in_half(text) else {
+            return Err(err);
+        };
+        eprintln!(
+            "[summarize] {} chars failed twice ({err}); splitting into {} + {} chars",
+            text.chars().count(),
+            left.chars().count(),
+            right.chars().count(),
+        );
+        let left_summary = summarize_with_fallback(llm, left, depth + 1).await?;
+        let right_summary = summarize_with_fallback(llm, right, depth + 1).await?;
+        Ok(format!("{left_summary}\n{right_summary}"))
+    })
+}
+
+/// What the retry/split recursion for one summary returns.
+type SummaryFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + 'a>>;
 
 #[cfg(test)]
 mod tests {
