@@ -90,6 +90,9 @@ pub struct RememberReport {
     /// The same content was stored before, but that write left no graph content;
     /// this call re-ingested it in place under the same `data_id`.
     pub repaired_in_place: bool,
+    /// Chunks the provider refused to extract (content filter): their text is
+    /// stored, their entities and summary are not.
+    pub refused_chunks: usize,
 }
 
 fn md5_hex(data: &str) -> String {
@@ -153,6 +156,7 @@ pub async fn remember(
                         vectors: 0,
                         skipped_existing: true,
                         repaired_in_place: false,
+                        refused_chunks: 0,
                     });
                 }
                 progress.stage(
@@ -196,11 +200,17 @@ pub async fn remember(
     // 4. per-chunk extraction + summarization
     let document_id = Uuid::new_v4();
     let doc_name = format!("text_{content_hash}");
+    let mut refused_chunks = 0usize;
     let mut extracted: Vec<ExtractedGraph> = Vec::with_capacity(chunks.len());
     let mut summaries: Vec<String> = Vec::with_capacity(chunks.len());
     for (i, c) in chunks.iter().enumerate() {
         let t0 = std::time::Instant::now();
-        let g = extract::extract_graph_resilient(llm, &c.text, custom_prompt).await?;
+        let chunk_extraction =
+            extract::extract_graph_resilient(llm, &c.text, custom_prompt).await?;
+        if chunk_extraction.refused {
+            refused_chunks += 1;
+        }
+        let g = chunk_extraction.graph;
         progress.stage(&format!(
             "chunk {}/{}: extracted {} nodes / {} edges in {:.1}s",
             i + 1,
@@ -270,6 +280,7 @@ pub async fn remember(
         vectors: written,
         skipped_existing: false,
         repaired_in_place,
+        refused_chunks,
     })
 }
 
@@ -335,39 +346,46 @@ fn build_datapoints(
         );
         dps.push(chunk_dp);
 
-        // TextSummary (id = uuid5(chunk_id, "TextSummary"))
+        // TextSummary (id = uuid5(chunk_id, "TextSummary")) — skipped when the
+        // provider refused to summarize this chunk; an empty summary would only
+        // add an unsearchable vector.
         let summary_text = summaries
             .get(chunk.chunk_index)
             .cloned()
             .unwrap_or_default();
-        dps.push(datapoints::datapoint(
-            ids::text_summary_id(chunk.id),
-            "TextSummary",
-            None,
-            3,
-            &["text"],
-            summary_text.clone(),
-            vec![
-                ("text", json!(summary_text)),
-                ("source_chunk_id", json!(chunk.id.to_string())),
-                ("summarized_in", Value::Null),
-                ("global_context_bucket_id", Value::Null),
-            ],
-            "extract_graph_and_summarize",
-            Some(content_hash.to_string()),
-            Some(dataset_name.to_string()),
-        ));
+        let has_summary = !summary_text.trim().is_empty();
+        if has_summary {
+            dps.push(datapoints::datapoint(
+                ids::text_summary_id(chunk.id),
+                "TextSummary",
+                None,
+                3,
+                &["text"],
+                summary_text.clone(),
+                vec![
+                    ("text", json!(summary_text)),
+                    ("source_chunk_id", json!(chunk.id.to_string())),
+                    ("summarized_in", Value::Null),
+                    ("global_context_bucket_id", Value::Null),
+                ],
+                "extract_graph_and_summarize",
+                Some(content_hash.to_string()),
+                Some(dataset_name.to_string()),
+            ));
+        }
 
         // chunk -[is_part_of]-> document
         raw_edges.push(edge_raw(chunk.id, document_id, "is_part_of", None));
 
         // TextSummary -[made_from]-> chunk
-        raw_edges.push(edge_raw(
-            ids::text_summary_id(chunk.id),
-            chunk.id,
-            "made_from",
-            None,
-        ));
+        if has_summary {
+            raw_edges.push(edge_raw(
+                ids::text_summary_id(chunk.id),
+                chunk.id,
+                "made_from",
+                None,
+            ));
+        }
 
         // entities from the LLM graph
         let mut chunk_entity_ids: Vec<(String, Uuid)> = Vec::new();

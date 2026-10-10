@@ -261,6 +261,13 @@ async fn main() -> anyhow::Result<()> {
                 &reflect_mem::remember::StderrProgress::new(),
             )
             .await?;
+            if report.refused_chunks > 0 {
+                eprintln!(
+                    "note: {} chunk(s) were refused by the LLM provider (content filter) — their \
+                     text is stored, their entities/summary are not",
+                    report.refused_chunks
+                );
+            }
             if report.skipped_existing {
                 println!(
                     "already stored: dataset={} data_id={}",

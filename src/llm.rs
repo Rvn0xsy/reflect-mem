@@ -17,6 +17,32 @@ struct ChatResponse {
     choices: Vec<Choice>,
 }
 
+/// The provider refused this input — MiniMax answers `422 input new_sensitive`,
+/// DeepSeek answers `200` with an empty message, and both do it for the *same*
+/// region of a red-team notes file. It is not a transport failure and not a JSON
+/// problem: retrying or splitting the text produces the same refusal (verified
+/// down to ~400 chars), so callers must stop and treat the chunk as
+/// un-extractable rather than failing the whole item.
+#[derive(Debug)]
+pub struct InputRefused {
+    pub reason: String,
+}
+
+impl std::fmt::Display for InputRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the provider refused this input: {}", self.reason)
+    }
+}
+
+impl std::error::Error for InputRefused {}
+
+/// Whether an error means "the provider will never accept this text"
+/// (as opposed to a transport hiccup or an unparseable answer, which are worth
+/// retrying and splitting).
+pub fn is_input_refused(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<InputRefused>().is_some()
+}
+
 #[derive(Debug, Deserialize)]
 struct Choice {
     message: Message,
@@ -172,6 +198,15 @@ impl LlmClient {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
+            // 4xx on the input is the provider's content filter, not a bad
+            // request of ours; 5xx/429 are worth retrying.
+            if status.as_u16() == 422
+                || (status.is_client_error() && body.contains("new_sensitive"))
+            {
+                return Err(anyhow::Error::new(InputRefused {
+                    reason: format!("{status}: {}", body.chars().take(200).collect::<String>()),
+                }));
+            }
             bail!("LLM request failed ({status}): {body}");
         }
 
@@ -191,13 +226,29 @@ impl LlmClient {
                  to stop it emitting a chain-of-thought"
             );
         }
-        bail!("the LLM returned an empty message")
+        // Same shape as MiniMax's 422: the provider dropped the answer instead of
+        // saying no (DeepSeek does this for filtered content).
+        Err(anyhow::Error::new(InputRefused {
+            reason: "the provider returned an empty message".to_string(),
+        }))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The refusal signal must be distinguishable from a transport error: one is
+    /// permanent for that text (skip the chunk), the other is worth retrying.
+    #[test]
+    fn refusal_is_distinguishable_from_other_errors() {
+        let refused = anyhow::Error::new(InputRefused {
+            reason: "422: input new_sensitive".into(),
+        });
+        assert!(is_input_refused(&refused));
+        assert!(refused.to_string().contains("provider refused this input"));
+        assert!(!is_input_refused(&anyhow::anyhow!("connection reset")));
+    }
 
     #[test]
     fn strips_inline_chain_of_thought() {

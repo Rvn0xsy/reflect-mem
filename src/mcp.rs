@@ -350,6 +350,15 @@ impl MemoryServer {
         .await
         .map_err(internal)?;
 
+        let refused_note = if report.refused_chunks > 0 {
+            format!(
+                " Note: {} chunk(s) were refused by the provider's content filter — their text is \
+                 stored, their entities and summary are not.",
+                report.refused_chunks
+            )
+        } else {
+            String::new()
+        };
         if report.skipped_existing {
             return Ok(format!(
                 "Already stored (dataset={}, data_id={}); nothing to do.",
@@ -371,7 +380,7 @@ impl MemoryServer {
         }
         Ok(format!(
             "Stored in dataset '{}': {} chunk(s), +{} graph nodes, +{} edges, {} vectors. \
-             data_id={}",
+             data_id={}{refused_note}",
             report.dataset,
             report.chunks,
             report.graph_nodes,

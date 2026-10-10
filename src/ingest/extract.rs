@@ -197,10 +197,6 @@ const EXTRACT_ATTEMPTS: usize = 2;
 /// How many times a chunk may be halved. Bounds the work on a pathological chunk.
 const EXTRACT_MAX_SPLIT_DEPTH: usize = 2;
 
-/// What the retry/split recursion for one chunk returns.
-type ExtractFuture<'a> =
-    std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExtractedGraph>> + Send + 'a>>;
-
 /// Extract a chunk's graph, surviving the extractor's occasional malformed or
 /// truncated JSON.
 ///
@@ -214,8 +210,17 @@ pub async fn extract_graph_resilient(
     llm: &LlmClient,
     text: &str,
     custom_prompt: Option<&str>,
-) -> Result<ExtractedGraph> {
+) -> Result<ChunkGraph> {
     extract_with_fallback(llm, text, custom_prompt, 0).await
+}
+
+/// One chunk's extraction plus whether the provider refused the text.
+#[derive(Debug)]
+pub struct ChunkGraph {
+    pub graph: ExtractedGraph,
+    /// The provider refused this text: no entities and no summary exist for the
+    /// chunk, but its text is still stored (a `DocumentChunk` carries it).
+    pub refused: bool,
 }
 
 fn extract_with_fallback<'a>(
@@ -223,16 +228,35 @@ fn extract_with_fallback<'a>(
     text: &'a str,
     custom_prompt: Option<&'a str>,
     depth: usize,
-) -> ExtractFuture<'a> {
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ChunkGraph>> + Send + 'a>> {
     Box::pin(async move {
         let mut last_err = None;
         let mut empty = None;
         for _ in 0..EXTRACT_ATTEMPTS {
             match extract_graph(llm, text, custom_prompt).await {
-                Ok(graph) if !graph.nodes.is_empty() => return Ok(graph),
+                Ok(graph) if !graph.nodes.is_empty() => {
+                    return Ok(ChunkGraph {
+                        graph,
+                        refused: false,
+                    });
+                }
                 // Keep it, but let a second attempt look for entities before we
                 // settle for "nothing here".
                 Ok(graph) => empty = Some(graph),
+                Err(err) if crate::llm::is_input_refused(&err) => {
+                    // No retry and no split: the same text is refused every time
+                    // (verified down to ~400 chars), so this chunk simply cannot
+                    // be extracted. Keep it for its text, lose its entities.
+                    eprintln!(
+                        "[extract] provider refused {} chars ({err}) — keeping the chunk without \
+                         entities; its text is still stored in the graph",
+                        text.chars().count()
+                    );
+                    return Ok(ChunkGraph {
+                        graph: ExtractedGraph::default(),
+                        refused: true,
+                    });
+                }
                 Err(err) => last_err = Some(err),
             }
         }
@@ -241,7 +265,10 @@ fn extract_with_fallback<'a>(
                 "[extract] {} chars yielded no entities — keeping the chunk for its summary",
                 text.chars().count()
             );
-            return Ok(graph);
+            return Ok(ChunkGraph {
+                graph,
+                refused: false,
+            });
         }
         let err = last_err.unwrap_or_else(|| anyhow::anyhow!("extraction failed"));
 
@@ -259,7 +286,10 @@ fn extract_with_fallback<'a>(
         );
         let left_graph = extract_with_fallback(llm, left, custom_prompt, depth + 1).await?;
         let right_graph = extract_with_fallback(llm, right, custom_prompt, depth + 1).await?;
-        Ok(merge_graphs(left_graph, right_graph))
+        Ok(ChunkGraph {
+            refused: left_graph.refused && right_graph.refused,
+            graph: merge_graphs(left_graph.graph, right_graph.graph),
+        })
     })
 }
 
@@ -355,6 +385,13 @@ fn summarize_with_fallback<'a>(
         for _ in 0..EXTRACT_ATTEMPTS {
             match summarize(llm, text).await {
                 Ok(summary) => return Ok(summary),
+                Err(err) if crate::llm::is_input_refused(&err) => {
+                    eprintln!(
+                        "[summarize] provider refused {} chars ({err}) — no summary for this chunk",
+                        text.chars().count()
+                    );
+                    return Ok(String::new());
+                }
                 Err(err) => last_err = Some(err),
             }
         }
