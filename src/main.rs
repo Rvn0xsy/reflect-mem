@@ -361,7 +361,37 @@ async fn main() -> anyhow::Result<()> {
                         item.data_id
                     );
                 }
-                if report.is_clean() {
+                // Vector tables are compared by row count — the only cheap way to
+                // notice "nodes landed, vectors did not", which makes a memory
+                // unsearchable while `remember` considers it stored.
+                let vectors =
+                    reflect_mem::storage::vector::VectorStore::open(&config::lancedb_path())
+                        .await?;
+                let vector_audit = reflect_mem::doctor::audit_vectors(&graph, &vectors).await?;
+                println!(
+                    "\nvector tables: {} checked — {} with missing rows, {} with extras, {} legacy",
+                    vector_audit.tables_checked,
+                    vector_audit.missing.len(),
+                    vector_audit.extra.len(),
+                    vector_audit.legacy.len()
+                );
+                for (table, want, have) in &vector_audit.missing {
+                    println!("  missing  {table}: graph expects {want} rows, found {have}");
+                }
+                for (table, want, have) in &vector_audit.extra {
+                    println!("  extra    {table}: graph expects {want} rows, found {have}");
+                }
+                for (table, rows) in &vector_audit.legacy {
+                    println!("  legacy   {table}: {rows} rows from the pre-Rust pipeline (unread)");
+                }
+                if !vector_audit.missing.is_empty() {
+                    println!(
+                        "  → `doctor --heal-vectors` re-embeds missing rows (it also purges and \
+                         de-duplicates extras)"
+                    );
+                }
+
+                if report.is_clean() && vector_audit.is_clean() {
                     println!("\nnothing to report: stores are consistent");
                 }
                 return Ok(());

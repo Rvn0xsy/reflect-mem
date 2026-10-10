@@ -241,26 +241,7 @@ pub async fn heal_vectors(
 ) -> Result<DoctorReport> {
     let mut report = DoctorReport::default();
     let all_nodes = graph.all_nodes()?;
-    // table name -> live nodes belonging to it
-    let mut tables: std::collections::BTreeMap<String, Vec<&GraphNode>> =
-        std::collections::BTreeMap::new();
-    for n in &all_nodes {
-        let type_ = n.type_.clone().unwrap_or_default();
-        let props: Value = n
-            .properties
-            .as_deref()
-            .and_then(|p| serde_json::from_str(p).ok())
-            .unwrap_or(Value::Null);
-        let fields = props
-            .get("metadata")
-            .and_then(|m| m.get("index_fields"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        for f in fields.iter().filter_map(Value::as_str) {
-            tables.entry(format!("{type_}_{f}")).or_default().push(n);
-        }
-    }
+    let tables = expected_tables(&all_nodes);
 
     for (table, nodes) in tables {
         let present: HashSet<String> = vectors.table_ids(&table).await?.into_iter().collect();
@@ -362,6 +343,99 @@ pub async fn heal_vectors(
     }
 
     Ok(report)
+}
+
+/// What one `doctor --audit` run found in the vector layer.
+#[derive(Debug, Default)]
+pub struct VectorAudit {
+    pub tables_checked: usize,
+    /// `(table, expected, present)` where rows are **missing** — the actionable
+    /// case ([`heal_vectors`] re-embeds them).
+    pub missing: Vec<(String, usize, usize)>,
+    /// `(table, expected, present)` where a node-derived table holds **more**
+    /// rows than the graph asks for: duplicates from append-based ingestion.
+    /// [`heal_vectors`] de-duplicates these.
+    pub extra: Vec<(String, usize, usize)>,
+    /// Tables that exist but that the graph says nothing about —
+    /// `(table, rows)`. These are leftovers from the pre-Rust pipeline (this
+    /// store carries ~22k `EdgeType_relationship_name` and 122
+    /// `SessionQAVector_text` rows); recall never reads them, `heal_vectors` does
+    /// not touch them, and they are reported for information only.
+    pub legacy: Vec<(String, usize)>,
+}
+
+impl VectorAudit {
+    /// Whether anything actionable is wrong. Legacy tables do not count: they
+    /// are a fact of the migrated store, not a fault to chase every run.
+    pub fn is_clean(&self) -> bool {
+        self.missing.is_empty() && self.extra.is_empty()
+    }
+}
+
+/// Compare every vector table with the graph: row counts only, no per-item work.
+///
+/// This is the cheap way to notice the shape a failed embedding write leaves
+/// behind — nodes landed, vectors did not (an ingest of 548 datapoints died
+/// exactly there when Ollama reset the connection). Those nodes are invisible to
+/// vector search, and `remember` will not re-ingest them because their graph half
+/// is present, so [`heal_vectors`] is what reconciles it.
+pub async fn audit_vectors(graph: &GraphStore, vectors: &VectorStore) -> Result<VectorAudit> {
+    let nodes = graph.all_nodes()?;
+    let expected = expected_tables(&nodes);
+    let existing: HashSet<String> = vectors.table_names().await?.into_iter().collect();
+    let mut report = VectorAudit::default();
+
+    let mut names: Vec<String> = expected
+        .keys()
+        .chain(existing.iter())
+        .cloned()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    names.sort();
+
+    for table in names {
+        let want = expected.get(&table).map(Vec::len).unwrap_or(0);
+        let have = if existing.contains(&table) {
+            vectors.count_rows(&table).await?
+        } else {
+            0
+        };
+        report.tables_checked += 1;
+        if want == 0 {
+            report.legacy.push((table, have));
+        } else if want > have {
+            report.missing.push((table, want, have));
+        } else if want < have {
+            report.extra.push((table, want, have));
+        }
+    }
+    Ok(report)
+}
+
+/// Vector tables the live graph implies: table name -> the nodes that must have a
+/// row in it (from `metadata.index_fields`, e.g. `Entity_name`).
+fn expected_tables(nodes: &[GraphNode]) -> std::collections::BTreeMap<String, Vec<&GraphNode>> {
+    let mut tables: std::collections::BTreeMap<String, Vec<&GraphNode>> =
+        std::collections::BTreeMap::new();
+    for n in nodes {
+        let type_ = n.type_.clone().unwrap_or_default();
+        let props: Value = n
+            .properties
+            .as_deref()
+            .and_then(|p| serde_json::from_str(p).ok())
+            .unwrap_or(Value::Null);
+        let fields = props
+            .get("metadata")
+            .and_then(|m| m.get("index_fields"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for f in fields.iter().filter_map(Value::as_str) {
+            tables.entry(format!("{type_}_{f}")).or_default().push(n);
+        }
+    }
+    tables
 }
 
 /// The text a datapoint contributes to its index field.
