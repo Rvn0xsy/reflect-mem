@@ -116,6 +116,20 @@ fn node_label(node: &GraphNode) -> String {
     }
 }
 
+/// Keep the best hit per node id.
+///
+/// A node id can appear more than once in a vector table (append-only writes used
+/// to duplicate entities shared across memories; leftovers from out-of-band graph
+/// edits are the same shape). Duplicates must never reach the context: at a fixed
+/// `top_k` they crowd out other memories, and the graph path would seed the same
+/// node twice. `search` returns hits nearest-first, so the first one wins.
+fn dedup_hits(hits: Vec<VectorHit>) -> Vec<VectorHit> {
+    let mut seen = std::collections::HashSet::new();
+    hits.into_iter()
+        .filter(|h| seen.insert(h.id.clone()))
+        .collect()
+}
+
 /// Render the per-node detail lines used as graph context.
 fn node_lines(nodes: &[GraphNode]) -> Vec<String> {
     nodes
@@ -181,9 +195,11 @@ pub async fn recall(
 
     let (context, seeds, reached_nodes, reached_edges) = match opts.search_type {
         SearchType::Summaries => {
-            let hits = vectors
-                .search(TABLE_TEXT_SUMMARY, query_vec, opts.top_k)
-                .await?;
+            let hits = dedup_hits(
+                vectors
+                    .search(TABLE_TEXT_SUMMARY, query_vec, opts.top_k)
+                    .await?,
+            );
             if hits.is_empty() {
                 return Ok(empty_outcome(opts.search_type));
             }
@@ -195,7 +211,7 @@ pub async fn recall(
             (join_bounded(&lines), hits, 0, 0)
         }
         SearchType::GraphCompletion => {
-            let seeds = vectors.search(TABLE_ENTITY, query_vec, opts.top_k).await?;
+            let seeds = dedup_hits(vectors.search(TABLE_ENTITY, query_vec, opts.top_k).await?);
             if seeds.is_empty() {
                 return Ok(empty_outcome(opts.search_type));
             }
@@ -317,6 +333,29 @@ mod tests {
         assert_eq!(node_label(&n), "[DocumentChunk]");
         n.name = Some("可读的名字".into());
         assert_eq!(node_label(&n), "[DocumentChunk] 可读的名字");
+    }
+
+    #[test]
+    fn dedup_keeps_the_nearest_hit_per_id() {
+        let hit = |id: &str, distance: f32| VectorHit {
+            id: id.to_string(),
+            distance,
+            text: None,
+            node_type: None,
+            document_id: None,
+            document_name: None,
+        };
+        let hits = vec![
+            hit("a", 0.1),
+            hit("b", 0.2),
+            hit("a", 0.3),
+            hit("c", 0.4),
+            hit("b", 0.5),
+        ];
+        let kept = dedup_hits(hits);
+        let ids: Vec<&str> = kept.iter().map(|h| h.id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "b", "c"]);
+        assert_eq!(kept[0].distance, 0.1, "the nearest hit must survive");
     }
 
     #[test]

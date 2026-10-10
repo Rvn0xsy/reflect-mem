@@ -391,10 +391,10 @@ async fn main() -> anyhow::Result<()> {
                 for (table, rows) in &vector_audit.legacy {
                     println!("  legacy   {table}: {rows} rows from the pre-Rust pipeline (unread)");
                 }
-                if !vector_audit.missing.is_empty() {
+                if !vector_audit.is_clean() {
                     println!(
-                        "  → `doctor --heal-vectors` re-embeds missing rows (it also purges and \
-                         de-duplicates extras)"
+                        "  → `doctor --heal-vectors` re-embeds missing rows and purges \
+                         duplicate/orphaned ones (any out-of-band graph edit needs this)"
                     );
                 }
 

@@ -224,6 +224,43 @@ pub async fn append_rows(
     Ok(rows.len())
 }
 
+/// Write rows so that each id ends up with **exactly one** row: existing rows for
+/// the same ids are deleted first, then the new rows are appended.
+///
+/// Append-only writing gave every write its own row for entities shared across
+/// memories — entity ids are name-derived, so each correction rewrites the same
+/// nodes. In the graph that is one merged node; in the vector tables it became
+/// one row per write: duplicates duplicate recall's seeds (crowding the same
+/// `top_k`) and needed a manual `doctor --heal-vectors` to clean up. `doctor`
+/// itself keeps using [`append_rows`]: it only writes rows it has verified are
+/// missing.
+pub async fn replace_rows(
+    db: &lancedb::Connection,
+    table: &str,
+    dims: usize,
+    rows: &[VectorRow],
+) -> Result<usize> {
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let exists = db
+        .table_names()
+        .execute()
+        .await?
+        .iter()
+        .any(|name| name == table);
+    if exists {
+        let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+        let removed = crate::storage::vector::VectorStore::new(db.clone())
+            .delete_by_ids(table, &ids)
+            .await?;
+        if removed > 0 {
+            eprintln!("[vectors] {table}: replaced {removed} existing row(s) for the same ids");
+        }
+    }
+    append_rows(db, table, dims, rows).await
+}
+
 /// Writes datapoint embeddings, grouped per table.
 pub struct VectorWriter {
     db: lancedb::Connection,
@@ -268,7 +305,7 @@ impl VectorWriter {
                     payload: Value::Object(dp.properties.clone()),
                 })
                 .collect();
-            written += append_rows(&self.db, &table, dims, &rows).await?;
+            written += replace_rows(&self.db, &table, dims, &rows).await?;
         }
         Ok(written)
     }
