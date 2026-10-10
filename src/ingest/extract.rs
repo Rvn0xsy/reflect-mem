@@ -113,27 +113,62 @@ pub struct ExtractedGraph {
     pub edges: Vec<ExtractedEdge>,
 }
 
-/// Parse a model response into JSON, tolerating ``` fences and reasoning tails.
+/// Parse a model response into JSON, tolerating ``` fences, prose around the
+/// object, reasoning tails, and **extra content after the object**.
+///
+/// The last part matters: the previous implementation took the
+/// `first '{' ..= last '}'` span, so a repeated/second object or a stray
+/// trailing brace turned a perfectly good first object into
+/// `trailing characters` / `expected \`:\`` errors. Those are exactly the
+/// failures observed on dense Notion exports, and they cost a whole item.
 fn parse_loose<T: for<'de> Deserialize<'de>>(raw: &str) -> Result<T> {
     let mut text = raw.trim();
     if let Some(idx) = text.rfind("</think>") {
         text = text[idx + "</think>".len()..].trim();
     }
-    let stripped = text
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
-    // If the model wrapped the JSON in prose, take the outermost braces.
-    let candidate = if stripped.starts_with('{') {
-        stripped
-    } else {
-        match (stripped.find('{'), stripped.rfind('}')) {
-            (Some(a), Some(b)) if b > a => &stripped[a..=b],
-            _ => stripped,
-        }
-    };
+    if let Ok(parsed) = serde_json::from_str(text) {
+        return Ok(parsed);
+    }
+    let candidate = first_json_object(text)
+        .context("the LLM response holds no balanced JSON object (truncated?)")?;
     serde_json::from_str(candidate).with_context(|| format!("parsing LLM JSON: {candidate:.200}"))
+}
+
+/// The first balanced `{…}` object in `raw`, ignoring prose before it, code
+/// fences around it, and anything after it (a second object, a trailing brace, an
+/// explanation, a reasoning tail).
+///
+/// `None` means there is no complete object — the response was cut off mid-JSON,
+/// which the caller can retry or work around by extracting smaller pieces.
+pub fn first_json_object(raw: &str) -> Option<&str> {
+    let start = raw.find('{')?;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, c) in raw[start..].char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&raw[start..start + i + 1]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Extract a `KnowledgeGraph` from one chunk of text.
@@ -153,6 +188,124 @@ pub async fn extract_graph(
         bail!("extraction returned no nodes");
     }
     Ok(graph)
+}
+
+/// How many times one chunk is extracted before falling back to splitting it.
+const EXTRACT_ATTEMPTS: usize = 2;
+/// How many times a chunk may be halved. Bounds the work on a pathological chunk.
+const EXTRACT_MAX_SPLIT_DEPTH: usize = 2;
+
+/// What the retry/split recursion for one chunk returns.
+type ExtractFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExtractedGraph>> + Send + 'a>>;
+
+/// Extract a chunk's graph, surviving the extractor's occasional malformed or
+/// truncated JSON.
+///
+/// Dense chunks — Notion metadata/CSV exports, tables — are the ones that break:
+/// the model's response is long enough to be cut off mid-object, or it emits a
+/// second object afterwards. Both used to fail the whole item. Here the same call
+/// is tried twice, and if that still fails the chunk is halved at a paragraph
+/// boundary and each half extracted and merged: smaller inputs, shorter responses,
+/// same facts. A chunk too small to split fails as before.
+pub async fn extract_graph_resilient(
+    llm: &LlmClient,
+    text: &str,
+    custom_prompt: Option<&str>,
+) -> Result<ExtractedGraph> {
+    extract_with_fallback(llm, text, custom_prompt, 0).await
+}
+
+fn extract_with_fallback<'a>(
+    llm: &'a LlmClient,
+    text: &'a str,
+    custom_prompt: Option<&'a str>,
+    depth: usize,
+) -> ExtractFuture<'a> {
+    Box::pin(async move {
+        let mut last_err = None;
+        for _ in 0..EXTRACT_ATTEMPTS {
+            match extract_graph(llm, text, custom_prompt).await {
+                Ok(graph) => return Ok(graph),
+                Err(err) => last_err = Some(err),
+            }
+        }
+        let err = last_err.unwrap_or_else(|| anyhow::anyhow!("extraction failed"));
+
+        if depth >= EXTRACT_MAX_SPLIT_DEPTH {
+            return Err(err);
+        }
+        let Some((left, right)) = split_in_half(text) else {
+            return Err(err);
+        };
+        eprintln!(
+            "[extract] {} chars failed twice ({err}); splitting into {} + {} chars",
+            text.chars().count(),
+            left.chars().count(),
+            right.chars().count(),
+        );
+        let left_graph = extract_with_fallback(llm, left, custom_prompt, depth + 1).await?;
+        let right_graph = extract_with_fallback(llm, right, custom_prompt, depth + 1).await?;
+        Ok(merge_graphs(left_graph, right_graph))
+    })
+}
+
+/// Split text into two useful halves at the paragraph break nearest the middle
+/// (falling back to a character boundary).
+///
+/// `None` when the text is too short for both halves to be worth a call — which
+/// is also what bounds the split recursion.
+pub fn split_in_half(text: &str) -> Option<(&str, &str)> {
+    const MIN_HALF_CHARS: usize = 400;
+    let n = text.chars().count();
+    if n < MIN_HALF_CHARS * 2 {
+        return None;
+    }
+    let offsets: Vec<usize> = text.char_indices().map(|(i, _)| i).collect();
+    let mid_byte = offsets[n / 2];
+    let cut = text
+        .match_indices("\n\n")
+        .map(|(i, _)| i)
+        .min_by_key(|i| i.abs_diff(mid_byte))
+        .unwrap_or(mid_byte);
+    let (left, right) = text.split_at(cut);
+    let (left, right) = (left.trim(), right.trim());
+    if left.chars().count() < MIN_HALF_CHARS || right.chars().count() < MIN_HALF_CHARS {
+        return None;
+    }
+    Some((left, right))
+}
+
+/// Concatenate two extractions from the same chunk, dropping the duplicates the
+/// halves produce for entities that straddle the split.
+pub fn merge_graphs(mut left: ExtractedGraph, right: ExtractedGraph) -> ExtractedGraph {
+    let key = |n: &ExtractedNode| {
+        if n.id.is_empty() {
+            n.name.clone()
+        } else {
+            n.id.clone()
+        }
+    };
+    let mut seen: std::collections::HashSet<String> = left.nodes.iter().map(key).collect();
+    for node in right.nodes {
+        if seen.insert(key(&node)) {
+            left.nodes.push(node);
+        }
+    }
+    let edge_key = |e: &ExtractedEdge| {
+        format!(
+            "{}|{}|{}",
+            e.source_node_id, e.target_node_id, e.relationship_name
+        )
+    };
+    let mut seen_edges: std::collections::HashSet<String> =
+        left.edges.iter().map(edge_key).collect();
+    for edge in right.edges {
+        if seen_edges.insert(edge_key(&edge)) {
+            left.edges.push(edge);
+        }
+    }
+    left
 }
 
 /// Summarize one chunk (`summarize_content.txt` prompt → `{"summary": …}`).
@@ -200,5 +353,93 @@ mod tests {
         }
         let s: S = parse_loose("思考过程...</think>{\"summary\": \"答案\"}").unwrap();
         assert_eq!(s.summary, "答案");
+    }
+
+    /// The observed failure: the model appended a second object, and the old
+    /// first-brace..last-brace span made the whole response unparseable.
+    #[test]
+    fn parse_loose_ignores_a_second_object() {
+        #[derive(Deserialize)]
+        struct S {
+            summary: String,
+        }
+        let s: S = parse_loose(r#"{"summary": "first"}{"summary": "second"}"#).unwrap();
+        assert_eq!(s.summary, "first");
+        let s: S = parse_loose("{\"summary\": \"ok\"} } trailing brace").unwrap();
+        assert_eq!(s.summary, "ok");
+    }
+
+    #[test]
+    fn first_json_object_handles_nesting_and_strings() {
+        // a `}` inside a string must not close the object, and `\"` must not
+        // toggle the in-string state
+        let raw = r#"pre {"a": {"b": "}"}, "c": "x}y"} post"#;
+        assert_eq!(
+            first_json_object(raw).unwrap(),
+            r#"{"a": {"b": "}"}, "c": "x}y"}"#
+        );
+        let raw = r#"{"a": "he said \"hi\""} tail"#;
+        assert_eq!(
+            first_json_object(raw).unwrap(),
+            r#"{"a": "he said \"hi\""}"#
+        );
+        assert_eq!(first_json_object("no object here"), None);
+    }
+
+    /// A response cut off mid-object has no balanced object; the caller retries
+    /// or splits instead of failing the item outright.
+    #[test]
+    fn first_json_object_returns_none_when_truncated() {
+        let raw = r#"{"nodes": [{"id": "a", "name": "A"}, {"id": "b""#;
+        assert_eq!(first_json_object(raw), None);
+        let err = parse_loose::<ExtractedGraph>(raw).unwrap_err();
+        assert!(
+            err.to_string().contains("no balanced JSON object"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn split_in_half_prefers_paragraph_boundaries() {
+        let text = format!("{}\n\n{}", "甲".repeat(600), "乙".repeat(600));
+        let (left, right) = split_in_half(&text).unwrap();
+        // the split lands on the paragraph break, and the break itself is trimmed
+        assert_eq!(left.chars().count(), 600);
+        assert_eq!(right.chars().count(), 600);
+        assert!(left.ends_with('甲'));
+        assert!(right.starts_with('乙'));
+    }
+
+    #[test]
+    fn split_in_half_refuses_text_too_short_to_split() {
+        assert!(split_in_half(&"短".repeat(300)).is_none());
+        // one huge half and one tiny one is not a useful split either
+        let lopsided = format!("甲\n\n{}", "乙".repeat(2000));
+        assert!(split_in_half(&lopsided).is_none());
+    }
+
+    #[test]
+    fn merge_graphs_drops_duplicate_nodes_and_edges() {
+        let g = |names: &[&str]| ExtractedGraph {
+            nodes: names
+                .iter()
+                .map(|n| ExtractedNode {
+                    id: n.to_string(),
+                    name: n.to_string(),
+                    type_: "Entity".into(),
+                    description: String::new(),
+                })
+                .collect(),
+            edges: vec![ExtractedEdge {
+                source_node_id: names[0].to_string(),
+                target_node_id: names[names.len() - 1].to_string(),
+                relationship_name: "related_to".into(),
+                description: None,
+            }],
+        };
+        let merged = merge_graphs(g(&["a", "shared"]), g(&["shared", "b"]));
+        let ids: Vec<&str> = merged.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "shared", "b"]);
+        assert_eq!(merged.edges.len(), 2, "the two halves' edges differ");
     }
 }

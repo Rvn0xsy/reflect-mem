@@ -200,7 +200,7 @@ pub async fn remember(
     let mut summaries: Vec<String> = Vec::with_capacity(chunks.len());
     for (i, c) in chunks.iter().enumerate() {
         let t0 = std::time::Instant::now();
-        let g = extract::extract_graph(llm, &c.text, custom_prompt).await?;
+        let g = extract::extract_graph_resilient(llm, &c.text, custom_prompt).await?;
         progress.stage(&format!(
             "chunk {}/{}: extracted {} nodes / {} edges in {:.1}s",
             i + 1,
